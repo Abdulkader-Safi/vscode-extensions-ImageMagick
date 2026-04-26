@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+@theme {
+  /* Core surfaces */
+  --color-vscode-fg: var(--vscode-foreground);
+  --color-vscode-bg: var(--vscode-editor-background);
+  --color-vscode-description: var(--vscode-descriptionForeground);
+  --color-vscode-error: var(--vscode-errorForeground);
+  --color-vscode-focus: var(--vscode-focusBorder);
+  --color-vscode-border: var(--vscode-panel-border);
+
+  /* Sidebar */
+  --color-vscode-sidebar-bg: var(--vscode-sideBar-background);
+  --color-vscode-sidebar-fg: var(--vscode-sideBar-foreground, var(--vscode-foreground));
+  --color-vscode-sidebar-border: var(--vscode-sideBar-border, var(--vscode-panel-border));
+  --color-vscode-section-bg: var(--vscode-sideBarSectionHeader-background);
+  --color-vscode-section-fg: var(--vscode-sideBarSectionHeader-foreground);
+
+  /* Buttons */
+  --color-vscode-button-bg: var(--vscode-button-background);
+  --color-vscode-button-fg: var(--vscode-button-foreground);
+  --color-vscode-button-hover: var(--vscode-button-hoverBackground);
+  --color-vscode-button-secondary-bg: var(--vscode-button-secondaryBackground);
+  --color-vscode-button-secondary-fg: var(--vscode-button-secondaryForeground);
+  --color-vscode-button-secondary-hover: var(--vscode-button-secondaryHoverBackground);
+
+  /* Inputs */
+  --color-vscode-input-bg: var(--vscode-input-background);
+  --color-vscode-input-fg: var(--vscode-input-foreground);
+  --color-vscode-input-border: var(--vscode-input-border, var(--vscode-panel-border));
+  --color-vscode-input-placeholder: var(--vscode-input-placeholderForeground);
+
+  /* Lists */
+  --color-vscode-list-hover: var(--vscode-list-hoverBackground);
+  --color-vscode-list-active-bg: var(--vscode-list-activeSelectionBackground);
+  --color-vscode-list-active-fg: var(--vscode-list-activeSelectionForeground);
+  --color-vscode-list-inactive-bg: var(--vscode-list-inactiveSelectionBackground);
+
+  /* Inline code / badges */
+  --color-vscode-code-bg: var(--vscode-textCodeBlock-background, var(--vscode-editorWidget-background));
+  --color-vscode-badge-bg: var(--vscode-badge-background);
+  --color-vscode-badge-fg: var(--vscode-badge-foreground);
+
+  /* Links */
+  --color-vscode-link: var(--vscode-textLink-foreground);
+  --color-vscode-link-active: var(--vscode-textLink-activeForeground);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  font-weight: var(--vscode-font-weight);
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+}
+
+code,
+kbd {
+  font-family: var(--vscode-editor-font-family);
+}
