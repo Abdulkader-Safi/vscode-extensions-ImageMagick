@@ -20,7 +20,7 @@ const esbuildProblemMatcherPlugin = {
       result.errors.forEach(({ text, location }) => {
         console.error(`✘ [ERROR] ${text}`);
         console.error(
-          `    ${location.file}:${location.line}:${location.column}:`
+          `    ${location.file}:${location.line}:${location.column}:`,
         );
       });
       console.log("[watch] build finished");
@@ -82,7 +82,7 @@ async function main() {
     sourcesContent: false,
     platform: "node",
     outfile: "dist/extension.js",
-    external: ["vscode"],
+    external: ["vscode", "magickwand.js", "magickwand.js/native"],
     logLevel: "silent",
     plugins: [esbuildProblemMatcherPlugin],
   });
@@ -97,7 +97,11 @@ async function main() {
     platform: "browser",
     outfile: "dist/webview.js",
     mainFields: ["svelte", "browser", "module", "main"],
-    conditions: ["svelte", "browser", production ? "production" : "development"],
+    conditions: [
+      "svelte",
+      "browser",
+      production ? "production" : "development",
+    ],
     logLevel: "silent",
     plugins: [
       esbuildSvelte({

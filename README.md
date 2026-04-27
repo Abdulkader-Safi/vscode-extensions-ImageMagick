@@ -1,144 +1,41 @@
-# Svelte Starter - VSCode Extension
+<p align="center">
+  <img src="img/logo.png" alt="ImageMagick" width="160" />
+</p>
 
-A VSCode extension template built with Svelte 5, TailwindCSS, and svelte-spa-router for building modern webview-based extensions.
+# ImageMagick
+
+A VS Code extension for optimizing images directly inside the editor. Resize, crop, rotate, compress and convert formats — without leaving VS Code, without uploading anything to the cloud.
+
+Powered by [magickwand.js](https://github.com/mmomtchev/magickwand.js) (full ImageMagick-7 bindings for Node).
 
 ## Features
 
-This extension includes two example pages demonstrating VSCode webview API integration:
+- **Resize** — width/height inputs, lock aspect ratio, quick percentage presets
+- **Crop** — drag a region on the preview, or type exact coordinates
+- **Rotate & Flip** — 90° presets, free-angle slider, horizontal / vertical flip
+- **Compress** — quality slider (1–100) for lossy formats
+- **Change format** — JPEG, PNG, WebP, GIF, TIFF, BMP (and AVIF where the bundled binary supports it)
+- **Live preview** with output size estimate
+- **Save As** dialog with a smart default filename (`photo.optimized.webp`) — never overwrites your source
 
-1. **Notification Page** - Send messages from the webview to VSCode to show notifications
-2. **Directory Listing Page** - Request data from VSCode and display it in the Svelte UI
+## Usage
 
-## Project Structure
+1. **From the Explorer:** right-click any image file → **Optimize Image with ImageMagick**.
+2. **From the command palette:** `Cmd/Ctrl+Shift+P` → **ImageMagick: Open Image** → pick a file.
+3. **Drag & drop:** open the panel via the command palette, then drag an image into the preview area.
 
-```
-.
-├── src/
-│   ├── extension.ts              # Extension entry point
-│   ├── WebviewProvider.ts        # Webview panel provider
-│   └── webview/
-│       ├── index.ts              # Svelte app entry point (mount)
-│       ├── index.css             # TailwindCSS imports
-│       ├── App.svelte            # Main app with routing
-│       ├── global.d.ts           # Type declarations (svelte, css)
-│       ├── vscode.d.ts           # acquireVsCodeApi() type
-│       ├── vscodeApi.ts          # VS Code API wrapper
-│       └── pages/
-│           ├── NotificationPage.svelte
-│           └── DirectoryListPage.svelte
-├── dist/                         # Build output
-├── esbuild.js                    # Build configuration
-├── svelte.config.js              # Svelte tooling config
-├── tailwind.config.js            # TailwindCSS configuration
-└── postcss.config.js             # PostCSS configuration
-```
+## Supported formats
+
+Reads anything ImageMagick can read. Writes whichever formats are present in the prebuilt magickwand.js binary on your platform — typically JPEG, PNG, WebP, GIF, TIFF, BMP. The extension probes the available encoders at startup and only shows formats it can actually produce.
 
 ## Development
 
-### Prerequisites
-
-- Node.js and npm
-- VSCode
-
-### Setup
-
-1. Install dependencies:
-
-   ```bash
-   npm install
-   ```
-
-2. Build the extension:
-
-   ```bash
-   npm run compile
-   ```
-
-3. Watch for changes:
-
-   ```bash
-   npm run watch
-   ```
-
-### Running the Extension
-
-1. Press `F5` in VSCode to open a new Extension Development Host window
-2. Open the Command Palette (`Cmd+Shift+P` on Mac, `Ctrl+Shift+P` on Windows/Linux)
-3. Run the command: **Open Svelte View**
-4. The Svelte webview will open in a new panel in the main editor area
-
-## Examples
-
-### Notification Button
-
-Navigate to the "Notification" page and click the button to send a notification to VSCode. This demonstrates:
-
-- Message passing from webview to extension
-- Using `vscode.window.showInformationMessage()`
-
-### Directory Listing
-
-Navigate to the "Directory" page to see the contents of your workspace. This demonstrates:
-
-- Requesting data from the extension
-- Receiving and displaying data in Svelte
-- Using VSCode's file system API
-
-## Technology Stack
-
-- **Svelte 5** - UI framework (runes syntax: `$state`, `$effect`, `$props`)
-- **svelte-spa-router** - Hash-based client-side routing (ideal for webviews)
-- **TailwindCSS v4** - Utility-first CSS framework
-- **TypeScript** - Type safety
-- **esbuild** + **esbuild-svelte** - Fast bundler with Svelte support
-- **PostCSS** - CSS processing
-
-## Build Scripts
-
-- `npm run compile` - Build the extension
-- `npm run watch` - Watch mode for development
-- `npm run check-types` - Type checking (tsc + svelte-check)
-- `npm run lint` - Lint the code
-- `npm test` - Run tests
-
-## VSCode API Communication
-
-The extension uses the VSCode webview messaging API:
-
-**From Webview to Extension:**
-
-```typescript
-vscode.postMessage({
-  type: "showNotification",
-  message: "Hello from Svelte!",
-});
+```bash
+npm install
+npm run watch    # rebuild extension + webview on save
 ```
 
-**From Extension to Webview:**
-
-```typescript
-panel.webview.postMessage({
-  type: "directoryContents",
-  data: { contents: [...] },
-});
-```
-
-## Customization
-
-### Adding New Pages
-
-1. Create a new `.svelte` component in `src/webview/pages/`
-2. Add a route in `src/webview/App.svelte` (update the `routes` object)
-3. Add a navigation link in the nav bar using `use:link`
-
-### Styling
-
-The extension uses TailwindCSS v4. All Tailwind utilities are available. The theme uses a dark color scheme optimized for VSCode.
-
-## Commands
-
-- `Open Svelte View` - Opens the Svelte webview panel
-- `Hello World` - Shows a simple notification (example command)
+The webview is a Svelte 5 + Tailwind v4 SPA. All ImageMagick work runs in the extension host (Node) — the webview only renders a downscaled PNG preview returned via base64.
 
 ## License
 
