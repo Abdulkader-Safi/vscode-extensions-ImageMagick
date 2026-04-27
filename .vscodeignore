@@ -11,5 +11,16 @@ vsc-extension-quickstart.md
 **/*.map
 **/*.ts
 **/.vscode-test.*
+
+# Exclude all of node_modules, then re-include only the magickwand.js runtime
+# essentials. The package's xpacks/, swig/, src/, deps/, etc. are all
+# build-time tooling — including them would balloon the .vsix to 200+ MB and
+# yazl trips on the symlink directories under xpacks/.
 node_modules/**
-!node_modules/magickwand.js/**
+!node_modules/magickwand.js/package.json
+!node_modules/magickwand.js/LICENSE
+!node_modules/magickwand.js/native/**
+!node_modules/magickwand.js/lib/index.native.mjs
+!node_modules/magickwand.js/lib/index.wasm.mjs
+!node_modules/magickwand.js/lib/index.d.ts
+!node_modules/magickwand.js/lib/binding/darwin-arm64/**
