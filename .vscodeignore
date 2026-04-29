@@ -28,3 +28,4 @@ node_modules/**
 !node_modules/magickwand.js/lib/binding/darwin-x64/**
 !node_modules/magickwand.js/lib/binding/linux-x64/**
 !node_modules/magickwand.js/lib/binding/win32-x64/**
+!node_modules/magickwand.js/swig/magickwand-js.cjs

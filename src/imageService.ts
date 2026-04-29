@@ -44,12 +44,24 @@ function loadMagick(): Promise<MagickNS> {
       try {
         const mod = await import("magickwand.js/native");
         return mod.Magick;
-      } catch {
-        throw new Error(
-          `ImageMagick is not available on this platform ` +
-            `(${process.platform}-${process.arch}). The bundled binaries ` +
-            `support darwin-arm64, darwin-x64, linux-x64, and win32-x64.`,
+      } catch (err) {
+        // Preserve the original error so the user (and the Output channel)
+        // can see what actually failed. The previous version of this catch
+        // discarded the cause and made bug reports impossible to act on.
+        const detail =
+          err instanceof Error
+            ? `${err.message}${err.stack ? `\n${err.stack}` : ""}`
+            : String(err);
+        const wrapped = new Error(
+          `Failed to load the ImageMagick native binary on ` +
+            `${process.platform}-${process.arch}. ` +
+            `Open the "ImageMagick" output channel for the full error.\n\n` +
+            `${detail}`,
         );
+        if (err instanceof Error) {
+          (wrapped as Error & { cause?: unknown }).cause = err;
+        }
+        throw wrapped;
       }
     })();
   }

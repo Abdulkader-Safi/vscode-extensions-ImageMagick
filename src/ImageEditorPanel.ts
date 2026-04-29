@@ -80,6 +80,7 @@ export class ImageEditorPanel {
     this.panel.webview.onDidReceiveMessage(
       (msg: WebviewToHostMessage) => {
         this.handleMessage(msg).catch((err: unknown) => {
+          this.logException(err, "handleMessage");
           this.postError(this.errorMessage(err, "Unexpected error"));
         });
       },
@@ -119,6 +120,7 @@ export class ImageEditorPanel {
           const result = await this.service.renderPreview(msg.data);
           this.post({ type: "previewUpdated", data: result });
         } catch (err) {
+          this.logException(err, "renderPreview");
           this.postError(this.errorMessage(err, "Failed to render preview"));
         }
         return;
@@ -142,6 +144,7 @@ export class ImageEditorPanel {
         data: { ...info, previewDataUrl: initial.previewDataUrl },
       });
     } catch (err) {
+      this.logException(err, `loadFromUri ${uri.fsPath}`);
       this.postError(this.errorMessage(err, `Could not open ${uri.fsPath}`));
     }
   }
@@ -157,6 +160,7 @@ export class ImageEditorPanel {
         data: { ...info, previewDataUrl: initial.previewDataUrl },
       });
     } catch (err) {
+      this.logException(err, `loadFromBuffer ${name}`);
       this.postError(this.errorMessage(err, `Could not open ${name}`));
     }
   }
@@ -192,7 +196,7 @@ export class ImageEditorPanel {
         filters: { [FORMAT_FILTER_LABELS[msg.data.format]]: [ext] },
       });
     } catch (err) {
-      log.appendLine(`save: showSaveDialog threw — ${String(err)}`);
+      this.logException(err, "save: showSaveDialog");
       this.postError(this.errorMessage(err, "Could not show the save dialog"));
       return;
     }
@@ -214,7 +218,7 @@ export class ImageEditorPanel {
         `Saved ${path.basename(result.path)} (${result.sizeKb} KB)`,
       );
     } catch (err) {
-      log.appendLine(`save: failed — ${String(err)}`);
+      this.logException(err, "save: write");
       this.postError(this.errorMessage(err, "Failed to save image"));
     }
   }
@@ -270,6 +274,35 @@ export class ImageEditorPanel {
       } satisfies HostToWebviewMessage);
     }
     vscode.window.showErrorMessage(`ImageMagick: ${message}`);
+  }
+
+  /**
+   * Logs the full exception (message + stack + chained cause) to the
+   * "ImageMagick" Output channel so users can copy a complete diagnostic
+   * when reporting bugs. The toast and webview banner only show the
+   * top-level message because long stacks are useless there.
+   */
+  private logException(err: unknown, context: string): void {
+    const log = getOutputChannel();
+    log.appendLine(`---`);
+    log.appendLine(`${context} (${new Date().toISOString()})`);
+    if (err instanceof Error) {
+      log.appendLine(`message: ${err.message}`);
+      if (err.stack) {
+        log.appendLine(err.stack);
+      }
+      const cause = (err as Error & { cause?: unknown }).cause;
+      if (cause instanceof Error) {
+        log.appendLine(`caused by: ${cause.message}`);
+        if (cause.stack) {
+          log.appendLine(cause.stack);
+        }
+      } else if (cause !== undefined) {
+        log.appendLine(`caused by: ${String(cause)}`);
+      }
+    } else {
+      log.appendLine(`error: ${String(err)}`);
+    }
   }
 
   private errorMessage(err: unknown, fallback: string): string {
