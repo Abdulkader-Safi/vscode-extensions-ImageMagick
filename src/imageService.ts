@@ -1,4 +1,4 @@
-import { Magick } from "magickwand.js/native";
+import type { Magick } from "magickwand.js/native";
 import type { EditorState, ImageFormat, SourceInfo } from "./messages";
 
 const PREVIEW_LONG_EDGE = 1600;
@@ -26,6 +26,36 @@ const CODER_TO_FORMAT: Record<string, ImageFormat> = {
   bmp: "bmp",
 };
 
+type MagickNS = (typeof import("magickwand.js/native"))["Magick"];
+
+let magickPromise: Promise<MagickNS> | null = null;
+
+/**
+ * Lazily loads the platform-native magickwand binary. Bundling all four
+ * supported native binaries (darwin-arm64/x64, linux-x64, win32-x64) into one
+ * universal .vsix means activation can land on a host that doesn't match any
+ * of them — a Linux ARM box, Windows ARM, etc. Loading on demand turns that
+ * from a silent activation crash into a clean error toast at the moment the
+ * user actually tries to use the extension.
+ */
+function loadMagick(): Promise<MagickNS> {
+  if (!magickPromise) {
+    magickPromise = (async () => {
+      try {
+        const mod = await import("magickwand.js/native");
+        return mod.Magick;
+      } catch {
+        throw new Error(
+          `ImageMagick is not available on this platform ` +
+            `(${process.platform}-${process.arch}). The bundled binaries ` +
+            `support darwin-arm64, darwin-x64, linux-x64, and win32-x64.`,
+        );
+      }
+    })();
+  }
+  return magickPromise;
+}
+
 let cachedWritableFormats: Set<ImageFormat> | null = null;
 
 /**
@@ -35,16 +65,17 @@ let cachedWritableFormats: Set<ImageFormat> | null = null;
  * throws "no encode delegate for this image format". Probing the coder list
  * lets the UI hide those choices instead of failing at save time.
  */
-export function getWritableFormats(): Set<ImageFormat> {
+export async function getWritableFormats(): Promise<Set<ImageFormat>> {
   if (cachedWritableFormats) {
     return cachedWritableFormats;
   }
   const set = new Set<ImageFormat>();
   try {
-    const coders = Magick.coderInfoList(
-      Magick.CoderInfo.AnyMatch,
-      Magick.CoderInfo.TrueMatch,
-      Magick.CoderInfo.AnyMatch,
+    const M = await loadMagick();
+    const coders = M.coderInfoList(
+      M.CoderInfo.AnyMatch,
+      M.CoderInfo.TrueMatch,
+      M.CoderInfo.AnyMatch,
     );
     for (const coder of coders) {
       const mapped = CODER_TO_FORMAT[coder.name().toLowerCase()];
@@ -86,7 +117,8 @@ export class ImageService {
     filePath: string,
     displayName: string,
   ): Promise<SourceInfo> {
-    const image = new Magick.Image();
+    const M = await loadMagick();
+    const image = new M.Image();
     await image.readAsync(filePath);
     return this.adoptSource(image, filePath, displayName);
   }
@@ -95,12 +127,13 @@ export class ImageService {
     bytes: Uint8Array,
     displayName: string,
   ): Promise<SourceInfo> {
+    const M = await loadMagick();
     // Copy into a fresh ArrayBuffer so the Blob constructor accepts it
     // regardless of whether the source view is backed by SharedArrayBuffer.
     const ab = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(ab).set(bytes);
-    const blob = new Magick.Blob(ab);
-    const image = new Magick.Image();
+    const blob = new M.Blob(ab);
+    const image = new M.Image();
     await image.readAsync(blob);
     return this.adoptSource(image, null, displayName);
   }
@@ -115,8 +148,9 @@ export class ImageService {
    * the displayed file size estimate is the true size at the target format/quality.
    */
   async renderPreview(state: EditorState): Promise<PreviewResult> {
-    const work = await this.applyPipeline(state);
-    const targetSizeKb = await this.encodedSizeKb(work, state);
+    const M = await loadMagick();
+    const work = await this.applyPipeline(state, M);
+    const targetSizeKb = await this.encodedSizeKb(work, state, M);
 
     const longEdge = Math.max(work.columns(), work.rows());
     if (longEdge > PREVIEW_LONG_EDGE) {
@@ -126,7 +160,7 @@ export class ImageService {
       await work.resizeAsync(`${w}x${h}!`);
     }
 
-    const previewBlob = new Magick.Blob();
+    const previewBlob = new M.Blob();
     await work.magickAsync("PNG");
     await work.writeAsync(previewBlob);
     const buf = Buffer.from(await previewBlob.dataAsync());
@@ -141,7 +175,8 @@ export class ImageService {
   }
 
   async save(state: EditorState, destPath: string): Promise<SaveResult> {
-    const work = await this.applyPipeline(state);
+    const M = await loadMagick();
+    const work = await this.applyPipeline(state, M);
     await work.magickAsync(FORMAT_TO_MAGICK[state.format]);
     if (!LOSSLESS_FORMATS.has(state.format)) {
       await work.qualityAsync(this.clampQuality(state.quality));
@@ -172,12 +207,15 @@ export class ImageService {
     return this.sourceInfo;
   }
 
-  private async applyPipeline(state: EditorState): Promise<Magick.Image> {
+  private async applyPipeline(
+    state: EditorState,
+    M: MagickNS,
+  ): Promise<Magick.Image> {
     if (!this.source) {
       throw new Error("No image loaded");
     }
     // Construct a fresh Image from the source so the pipeline is non-destructive.
-    const work = new Magick.Image(this.source);
+    const work = new M.Image(this.source);
 
     if (state.crop) {
       const c = state.crop;
@@ -211,9 +249,10 @@ export class ImageService {
   private async encodedSizeKb(
     image: Magick.Image,
     state: EditorState,
+    M: MagickNS,
   ): Promise<number> {
-    const measureBlob = new Magick.Blob();
-    const probe = new Magick.Image(image);
+    const measureBlob = new M.Blob();
+    const probe = new M.Image(image);
     await probe.magickAsync(FORMAT_TO_MAGICK[state.format]);
     if (!LOSSLESS_FORMATS.has(state.format)) {
       await probe.qualityAsync(this.clampQuality(state.quality));

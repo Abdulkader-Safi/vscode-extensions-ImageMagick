@@ -102,7 +102,7 @@ export class ImageEditorPanel {
         this.webviewReady = true;
         this.post({
           type: "formatsAvailable",
-          data: { formats: Array.from(getWritableFormats()) },
+          data: { formats: Array.from(await getWritableFormats()) },
         });
         if (this.pendingSourceUri) {
           await this.loadFromUri(this.pendingSourceUri);
@@ -135,7 +135,7 @@ export class ImageEditorPanel {
         path.basename(uri.fsPath),
       );
       const initial = await this.service.renderPreview(
-        this.defaultStateFor(info.format),
+        await this.defaultStateFor(info.format),
       );
       this.post({
         type: "imageLoaded",
@@ -150,7 +150,7 @@ export class ImageEditorPanel {
     try {
       const info = await this.service.loadFromBuffer(bytes, name);
       const initial = await this.service.renderPreview(
-        this.defaultStateFor(info.format),
+        await this.defaultStateFor(info.format),
       );
       this.post({
         type: "imageLoaded",
@@ -223,9 +223,9 @@ export class ImageEditorPanel {
     this.post({ type: "saveStatus", data: { message } });
   }
 
-  private defaultStateFor(
+  private async defaultStateFor(
     sourceFormat: string,
-  ): import("./messages").EditorState {
+  ): Promise<import("./messages").EditorState> {
     const fmt = sourceFormat.toLowerCase();
     const guessed: ImageFormat =
       fmt === "jpeg" || fmt === "jpg"
@@ -243,7 +243,7 @@ export class ImageEditorPanel {
                   : fmt === "bmp"
                     ? "bmp"
                     : "png";
-    const writable = getWritableFormats();
+    const writable = await getWritableFormats();
     const initial: ImageFormat = writable.has(guessed) ? guessed : "png";
     return {
       crop: null,

@@ -2,7 +2,7 @@
   "name": "imagemagick",
   "displayName": "ImageMagick",
   "description": "Resize, crop, rotate, compress and convert images directly inside VS Code, powered by ImageMagick.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "abdulkadersafi",
   "license": "MIT",
   "engines": {
@@ -69,7 +69,8 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run package",
+    "vscode:prepublish": "node scripts/fetch-binaries.mjs && npm run package",
+    "fetch-binaries": "node scripts/fetch-binaries.mjs",
     "compile": "npm run check-types && npm run lint && node esbuild.js",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch",

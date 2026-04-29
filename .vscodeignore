@@ -2,6 +2,7 @@
 .vscode-test/**
 out/**
 src/**
+scripts/**
 .gitignore
 .yarnrc
 esbuild.js
@@ -24,3 +25,6 @@ node_modules/**
 !node_modules/magickwand.js/lib/index.wasm.mjs
 !node_modules/magickwand.js/lib/index.d.ts
 !node_modules/magickwand.js/lib/binding/darwin-arm64/**
+!node_modules/magickwand.js/lib/binding/darwin-x64/**
+!node_modules/magickwand.js/lib/binding/linux-x64/**
+!node_modules/magickwand.js/lib/binding/win32-x64/**
