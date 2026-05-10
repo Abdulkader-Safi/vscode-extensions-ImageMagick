@@ -2,6 +2,7 @@
     import { onMount, onDestroy } from "svelte";
     import { send, onHostMessage } from "../messageBus";
     import type {
+        BulkFileInfo,
         CropRect,
         EditorState,
         ImageFormat,
@@ -14,6 +15,7 @@
     import FormatPanel from "../components/FormatPanel.svelte";
     import RotatePanel from "../components/RotatePanel.svelte";
     import CropPanel from "../components/CropPanel.svelte";
+    import BulkFilesPanel from "../components/BulkFilesPanel.svelte";
     import ActionBar from "../components/ActionBar.svelte";
 
     let source = $state<SourceInfo | null>(null);
@@ -35,6 +37,10 @@
     let saving = $state(false);
     let saveStatus = $state<string | null>(null);
     let busyPreview = $state(false);
+
+    // Bulk mode state
+    let bulkFiles = $state<BulkFileInfo[]>([]);
+    let activeIndex = $state(0);
 
     // Pipeline state
     let crop = $state<CropRect | null>(null);
@@ -62,6 +68,9 @@
     $effect(() => {
         // Touch all reactive fields so this effect re-runs.
         void editorState;
+        // Also depend on `source` so switching files re-renders the preview
+        // with the current pipeline applied to the new image.
+        void source;
         if (!source) {
             return;
         }
@@ -93,6 +102,10 @@
                         format = availableFormats[0] ?? "png";
                     }
                     break;
+                case "bulkInfo":
+                    bulkFiles = msg.data.files;
+                    activeIndex = msg.data.activeIndex;
+                    break;
                 case "imageLoaded":
                     source = {
                         path: msg.data.path,
@@ -109,6 +122,27 @@
                     };
                     format = guessFormat(msg.data.format);
                     firstStateInit = true;
+                    errorMessage = null;
+                    break;
+                case "bulkActiveChanged":
+                    // Switching files inside a bulk session: keep the user's
+                    // pipeline settings, just update the source. The $effect
+                    // on `source` will trigger a fresh preview render.
+                    source = {
+                        path: msg.data.path,
+                        name: msg.data.name,
+                        width: msg.data.width,
+                        height: msg.data.height,
+                        format: msg.data.format,
+                    };
+                    activeIndex = msg.data.activeIndex;
+                    previewMeta = {
+                        width: msg.data.width,
+                        height: msg.data.height,
+                        sizeKb: 0,
+                    };
+                    firstStateInit = false;
+                    busyPreview = true;
                     errorMessage = null;
                     break;
                 case "previewUpdated":
@@ -128,6 +162,13 @@
                     saveStatus = null;
                     break;
                 case "saveCanceled":
+                    saving = false;
+                    saveStatus = null;
+                    break;
+                case "bulkSaveProgress":
+                    saveStatus = `Saving ${msg.data.current}/${msg.data.total}: ${msg.data.name}`;
+                    break;
+                case "bulkSaveDone":
                     saving = false;
                     saveStatus = null;
                     break;
@@ -187,6 +228,18 @@
         });
     }
 
+    function handleBulkSave() {
+        if (!source || bulkFiles.length < 2) {
+            return;
+        }
+        saving = true;
+        saveStatus = "Preparing…";
+        send({
+            type: "requestBulkSave",
+            data: $state.snapshot(editorState) as EditorState,
+        });
+    }
+
     function handleReset() {
         crop = null;
         rotate = 0;
@@ -200,9 +253,22 @@
         errorMessage = null;
     }
 
+    function handleSelectBulkFile(index: number) {
+        if (saving) {
+            return;
+        }
+        if (index === activeIndex) {
+            return;
+        }
+        send({ type: "selectBulkFile", data: { index } });
+    }
+
     function handleDropFile(file: File) {
         file.arrayBuffer().then((buf) => {
             const bytes = Array.from(new Uint8Array(buf));
+            // Drag-drop replaces the bulk session with a single buffer source.
+            bulkFiles = [];
+            activeIndex = 0;
             send({ type: "dropFile", data: { name: file.name, bytes } });
         });
     }
@@ -231,6 +297,14 @@
                 <div
                     class="flex flex-col divide-y divide-vscode-sidebar-border"
                 >
+                    {#if bulkFiles.length > 1}
+                        <BulkFilesPanel
+                            files={bulkFiles}
+                            {activeIndex}
+                            disabled={saving}
+                            onSelect={handleSelectBulkFile}
+                        />
+                    {/if}
                     <ResizePanel
                         bind:resize
                         sourceWidth={source.width}
@@ -283,7 +357,9 @@
         {saving}
         {saveStatus}
         {previewMeta}
+        bulkCount={bulkFiles.length}
         onSave={handleSave}
+        onBulkSave={handleBulkSave}
         onReset={handleReset}
     />
 </div>

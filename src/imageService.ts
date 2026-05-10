@@ -156,32 +156,46 @@ export class ImageService {
 
   /**
    * Renders a downscaled PNG preview of the current pipeline output.
-   * Always emits PNG so colors are exact regardless of target format/quality;
-   * the displayed file size estimate is the true size at the target format/quality.
+   *
+   * The visual preview SKIPS the crop step so the user can see the full
+   * frame and reposition the crop box on it. Output dimensions and the file
+   * size estimate, however, are still measured from the cropped pipeline —
+   * those describe what Save will actually produce.
+   *
+   * Always emits PNG so colors are exact regardless of target format/quality.
    */
   async renderPreview(state: EditorState): Promise<PreviewResult> {
     const M = await loadMagick();
-    const work = await this.applyPipeline(state, M);
-    const targetSizeKb = await this.encodedSizeKb(work, state, M);
 
-    const longEdge = Math.max(work.columns(), work.rows());
+    // Measurement: full pipeline (crop included) — drives the bottom-bar
+    // dimensions and KB estimate so they match the eventual export.
+    const full = await this.applyPipeline(state, M);
+    const targetSizeKb = await this.encodedSizeKb(full, state, M);
+    const outWidth = full.columns();
+    const outHeight = full.rows();
+
+    // Visual: same pipeline but without crop, so the entire image stays
+    // visible with the crop overlay drawn on top in the webview.
+    const visual = await this.applyPipeline(state, M, { skipCrop: true });
+
+    const longEdge = Math.max(visual.columns(), visual.rows());
     if (longEdge > PREVIEW_LONG_EDGE) {
       const scale = PREVIEW_LONG_EDGE / longEdge;
-      const w = Math.max(1, Math.round(work.columns() * scale));
-      const h = Math.max(1, Math.round(work.rows() * scale));
-      await work.resizeAsync(`${w}x${h}!`);
+      const w = Math.max(1, Math.round(visual.columns() * scale));
+      const h = Math.max(1, Math.round(visual.rows() * scale));
+      await visual.resizeAsync(`${w}x${h}!`);
     }
 
     const previewBlob = new M.Blob();
-    await work.magickAsync("PNG");
-    await work.writeAsync(previewBlob);
+    await visual.magickAsync("PNG");
+    await visual.writeAsync(previewBlob);
     const buf = Buffer.from(await previewBlob.dataAsync());
     const previewDataUrl = `data:image/png;base64,${buf.toString("base64")}`;
 
     return {
       previewDataUrl,
-      width: work.columns(),
-      height: work.rows(),
+      width: outWidth,
+      height: outHeight,
       sizeKb: targetSizeKb,
     };
   }
@@ -222,6 +236,7 @@ export class ImageService {
   private async applyPipeline(
     state: EditorState,
     M: MagickNS,
+    opts: { skipCrop?: boolean } = {},
   ): Promise<Magick.Image> {
     if (!this.source) {
       throw new Error("No image loaded");
@@ -229,7 +244,7 @@ export class ImageService {
     // Construct a fresh Image from the source so the pipeline is non-destructive.
     const work = new M.Image(this.source);
 
-    if (state.crop) {
+    if (state.crop && !opts.skipCrop) {
       const c = state.crop;
       const w = Math.max(1, Math.round(c.w));
       const h = Math.max(1, Math.round(c.h));

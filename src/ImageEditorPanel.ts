@@ -37,11 +37,15 @@ export class ImageEditorPanel {
   private readonly service = new ImageService();
   private disposables: vscode.Disposable[] = [];
   private webviewReady = false;
-  private pendingSourceUri: vscode.Uri | null = null;
+  private pendingUris: vscode.Uri[] = [];
+  /** Full set of files in this panel; non-empty only in bulk mode. */
+  private bulkUris: vscode.Uri[] = [];
+  /** Index of the currently-loaded image in `bulkUris` (or 0 in single mode). */
+  private activeIndex = 0;
 
   static createOrShow(
     extensionUri: vscode.Uri,
-    sourceUri: vscode.Uri | null,
+    uris: vscode.Uri[],
   ): ImageEditorPanel {
     // For now each invocation opens a fresh panel; image-edit sessions are
     // independent. A later iteration could reuse an existing panel for the
@@ -49,7 +53,12 @@ export class ImageEditorPanel {
     const column =
       vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.One;
 
-    const title = sourceUri ? path.basename(sourceUri.fsPath) : "ImageMagick";
+    const title =
+      uris.length > 1
+        ? `ImageMagick (${uris.length} files)`
+        : uris[0]
+          ? path.basename(uris[0].fsPath)
+          : "ImageMagick";
     const panel = vscode.window.createWebviewPanel(
       ImageEditorPanel.viewType,
       title,
@@ -61,17 +70,19 @@ export class ImageEditorPanel {
       },
     );
 
-    return new ImageEditorPanel(panel, extensionUri, sourceUri);
+    return new ImageEditorPanel(panel, extensionUri, uris);
   }
 
   private constructor(
     panel: vscode.WebviewPanel,
     extensionUri: vscode.Uri,
-    sourceUri: vscode.Uri | null,
+    uris: vscode.Uri[],
   ) {
     this.panel = panel;
     this.extensionUri = extensionUri;
-    this.pendingSourceUri = sourceUri;
+    this.pendingUris = uris;
+    this.bulkUris = uris.length > 1 ? uris.slice() : [];
+    this.activeIndex = 0;
     ImageEditorPanel.panels.push(this);
 
     this.panel.webview.html = this.getHtmlForWebview(this.panel.webview);
@@ -105,14 +116,34 @@ export class ImageEditorPanel {
           type: "formatsAvailable",
           data: { formats: Array.from(await getWritableFormats()) },
         });
-        if (this.pendingSourceUri) {
-          await this.loadFromUri(this.pendingSourceUri);
-          this.pendingSourceUri = null;
+        if (this.bulkUris.length > 0) {
+          this.post({
+            type: "bulkInfo",
+            data: {
+              files: this.bulkUris.map((u) => ({
+                name: path.basename(u.fsPath),
+                path: u.fsPath,
+              })),
+              activeIndex: 0,
+            },
+          });
         }
+        if (this.pendingUris[0]) {
+          await this.loadFromUri(this.pendingUris[0]);
+        }
+        this.pendingUris = [];
         return;
       case "dropFile": {
         const bytes = Uint8Array.from(msg.data.bytes);
+        // Drag-dropped files break out of bulk mode; the panel becomes a
+        // single-image editor for that buffer.
+        this.bulkUris = [];
+        this.activeIndex = 0;
         await this.loadFromBuffer(bytes, msg.data.name);
+        return;
+      }
+      case "selectBulkFile": {
+        await this.handleSelectBulkFile(msg.data.index);
         return;
       }
       case "requestPreview":
@@ -127,6 +158,30 @@ export class ImageEditorPanel {
       case "requestSave":
         await this.handleSave(msg);
         return;
+      case "requestBulkSave":
+        await this.handleBulkSave(msg);
+        return;
+    }
+  }
+
+  private async handleSelectBulkFile(index: number): Promise<void> {
+    if (index < 0 || index >= this.bulkUris.length) {
+      return;
+    }
+    const uri = this.bulkUris[index];
+    try {
+      const info = await this.service.loadFromPath(
+        uri.fsPath,
+        path.basename(uri.fsPath),
+      );
+      this.activeIndex = index;
+      this.post({
+        type: "bulkActiveChanged",
+        data: { ...info, activeIndex: index },
+      });
+    } catch (err) {
+      this.logException(err, `selectBulkFile ${uri.fsPath}`);
+      this.postError(this.errorMessage(err, `Could not open ${uri.fsPath}`));
     }
   }
 
@@ -220,6 +275,99 @@ export class ImageEditorPanel {
     } catch (err) {
       this.logException(err, "save: write");
       this.postError(this.errorMessage(err, "Failed to save image"));
+    }
+  }
+
+  private async handleBulkSave(
+    msg: Extract<WebviewToHostMessage, { type: "requestBulkSave" }>,
+  ): Promise<void> {
+    const log = getOutputChannel();
+    if (this.bulkUris.length === 0) {
+      this.postError("No bulk file list.");
+      return;
+    }
+
+    const ext = FORMAT_EXTENSIONS[msg.data.format];
+    const defaultDir =
+      vscode.Uri.file(path.dirname(this.bulkUris[0].fsPath));
+
+    this.postSaveStatus("Choose an output folder…");
+    let folder: vscode.Uri | undefined;
+    try {
+      const picks = await vscode.window.showOpenDialog({
+        defaultUri: defaultDir,
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false,
+        openLabel: "Save All Here",
+      });
+      folder = picks?.[0];
+    } catch (err) {
+      this.logException(err, "bulkSave: showOpenDialog");
+      this.postError(
+        this.errorMessage(err, "Could not show the folder dialog"),
+      );
+      return;
+    }
+
+    if (!folder) {
+      log.appendLine("bulkSave: dialog dismissed");
+      this.post({ type: "saveCanceled" });
+      return;
+    }
+
+    log.appendLine(
+      `bulkSave: writing ${this.bulkUris.length} file(s) to ${folder.fsPath}`,
+    );
+
+    let saved = 0;
+    let failed = 0;
+    for (let i = 0; i < this.bulkUris.length; i++) {
+      const uri = this.bulkUris[i];
+      const name = path.basename(uri.fsPath);
+      this.post({
+        type: "bulkSaveProgress",
+        data: { current: i + 1, total: this.bulkUris.length, name },
+      });
+      try {
+        await this.service.loadFromPath(uri.fsPath, name);
+        const destPath = path.join(
+          folder.fsPath,
+          stripExtension(name) + ".optimized." + ext,
+        );
+        await this.service.save(msg.data, destPath);
+        saved++;
+      } catch (err) {
+        failed++;
+        this.logException(err, `bulkSave: ${uri.fsPath}`);
+      }
+    }
+
+    // Restore the active image so the panel keeps working after the bulk run.
+    try {
+      const active = this.bulkUris[this.activeIndex];
+      if (active) {
+        await this.service.loadFromPath(
+          active.fsPath,
+          path.basename(active.fsPath),
+        );
+      }
+    } catch (err) {
+      this.logException(err, "bulkSave: restore active");
+    }
+
+    this.post({
+      type: "bulkSaveDone",
+      data: { saved, failed, dir: folder.fsPath },
+    });
+    if (failed === 0) {
+      vscode.window.showInformationMessage(
+        `Saved ${saved} image${saved === 1 ? "" : "s"} to ${folder.fsPath}`,
+      );
+    } else {
+      vscode.window.showWarningMessage(
+        `Saved ${saved}, ${failed} failed. See ImageMagick output for details.`,
+      );
     }
   }
 
