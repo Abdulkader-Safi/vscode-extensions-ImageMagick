@@ -1,11 +1,18 @@
 <script lang="ts">
     import { onMount, onDestroy } from "svelte";
     import { send, onHostMessage } from "../messageBus";
+    import {
+        ImageService,
+        getWritableFormats,
+        encodeBytes,
+    } from "../engine/imageEngine";
+    import { streamOutbound, InboundAssembler } from "../transport";
     import type {
         BulkFileInfo,
         CropRect,
         EditorState,
         ImageFormat,
+        InboundMeta,
         ResizeSpec,
         SourceInfo,
     } from "../../messages";
@@ -17,6 +24,12 @@
     import CropPanel from "../components/CropPanel.svelte";
     import BulkFilesPanel from "../components/BulkFilesPanel.svelte";
     import ActionBar from "../components/ActionBar.svelte";
+
+    // The image engine runs here in the webview (ImageMagick WASM), so this
+    // page owns one ImageService for the active edit session and talks to the
+    // host only to read source bytes and write encoded output.
+    const service = new ImageService();
+    const inbound = new InboundAssembler();
 
     let source = $state<SourceInfo | null>(null);
     let availableFormats = $state<ImageFormat[]>([
@@ -51,8 +64,10 @@
     let format = $state<ImageFormat>("png");
     let quality = $state(85);
 
-    let firstStateInit = true;
+    let hasLoadedOnce = false;
     let previewTimer: ReturnType<typeof setTimeout> | null = null;
+    // Monotonic token so a slow preview render can't clobber a newer one.
+    let previewSeq = 0;
 
     const editorState = $derived<EditorState>({
         crop,
@@ -64,96 +79,74 @@
         quality,
     });
 
-    // Drive preview requests whenever the pipeline state changes — debounced.
+    // Re-render the preview whenever the pipeline or the source changes — the
+    // work happens locally, debounced so dragging a slider doesn't thrash it.
     $effect(() => {
-        // Touch all reactive fields so this effect re-runs.
+        // Touch reactive fields so this effect re-runs on any of them.
         void editorState;
-        // Also depend on `source` so switching files re-renders the preview
-        // with the current pipeline applied to the new image.
         void source;
         if (!source) {
-            return;
-        }
-        if (firstStateInit) {
-            // The host already sent the initial preview with `imageLoaded`.
-            firstStateInit = false;
             return;
         }
         if (previewTimer) {
             clearTimeout(previewTimer);
         }
-        // Snapshot the reactive proxy into a plain JS object — `postMessage`
-        // uses structured-clone and chokes on Svelte $state proxies.
         const snapshot = $state.snapshot(editorState) as EditorState;
         previewTimer = setTimeout(() => {
-            busyPreview = true;
-            send({ type: "requestPreview", data: snapshot });
+            void renderPreview(snapshot);
         }, 150);
     });
+
+    async function renderPreview(state: EditorState): Promise<void> {
+        const seq = ++previewSeq;
+        busyPreview = true;
+        try {
+            const result = await service.renderPreview(state);
+            if (seq !== previewSeq) {
+                return; // a newer render superseded this one
+            }
+            previewDataUrl = result.previewDataUrl;
+            previewMeta = {
+                width: result.width,
+                height: result.height,
+                sizeKb: result.sizeKb,
+            };
+            errorMessage = null;
+        } catch (err) {
+            if (seq === previewSeq) {
+                errorMessage = describeError(err, "Failed to render preview");
+            }
+        } finally {
+            if (seq === previewSeq) {
+                busyPreview = false;
+            }
+        }
+    }
 
     let dispose: (() => void) | null = null;
 
     onMount(() => {
         dispose = onHostMessage((msg) => {
+            console.log("[ImageMagick] webview received:", msg.type);
             switch (msg.type) {
-                case "formatsAvailable":
-                    availableFormats = msg.data.formats;
-                    if (!availableFormats.includes(format)) {
-                        format = availableFormats[0] ?? "png";
-                    }
-                    break;
                 case "bulkInfo":
                     bulkFiles = msg.data.files;
                     activeIndex = msg.data.activeIndex;
                     break;
-                case "imageLoaded":
-                    source = {
-                        path: msg.data.path,
-                        name: msg.data.name,
-                        width: msg.data.width,
-                        height: msg.data.height,
-                        format: msg.data.format,
-                    };
-                    previewDataUrl = msg.data.previewDataUrl;
-                    previewMeta = {
-                        width: msg.data.width,
-                        height: msg.data.height,
-                        sizeKb: 0,
-                    };
-                    format = guessFormat(msg.data.format);
-                    firstStateInit = true;
-                    errorMessage = null;
+                case "inBegin":
+                    inbound.begin(
+                        msg.data.id,
+                        msg.data.total,
+                        msg.data.meta,
+                    );
                     break;
-                case "bulkActiveChanged":
-                    // Switching files inside a bulk session: keep the user's
-                    // pipeline settings, just update the source. The $effect
-                    // on `source` will trigger a fresh preview render.
-                    source = {
-                        path: msg.data.path,
-                        name: msg.data.name,
-                        width: msg.data.width,
-                        height: msg.data.height,
-                        format: msg.data.format,
-                    };
-                    activeIndex = msg.data.activeIndex;
-                    previewMeta = {
-                        width: msg.data.width,
-                        height: msg.data.height,
-                        sizeKb: 0,
-                    };
-                    firstStateInit = false;
-                    busyPreview = true;
-                    errorMessage = null;
+                case "inChunk": {
+                    const done = inbound.chunk(msg.data.id, msg.data.b64);
+                    if (done) {
+                        void handleInbound(done.meta, done.bytes);
+                    }
                     break;
-                case "previewUpdated":
-                    previewDataUrl = msg.data.previewDataUrl;
-                    previewMeta = {
-                        width: msg.data.width,
-                        height: msg.data.height,
-                        sizeKb: msg.data.sizeKb,
-                    };
-                    busyPreview = false;
-                    break;
+                }
                 case "saveStatus":
                     saveStatus = msg.data.message;
                     break;
@@ -178,8 +171,16 @@
                     saving = false;
                     saveStatus = null;
                     break;
+                default:
+                    console.warn(
+                        "[ImageMagick] unhandled message type (host/webview version mismatch?):",
+                        (msg as { type?: string }).type,
+                    );
             }
         });
+        // Warm the engine and learn which formats it can actually encode.
+        void initFormats();
+        console.log("[ImageMagick] webview mounted, sending ready");
         send({ type: "ready" });
     });
 
@@ -189,6 +190,98 @@
             clearTimeout(previewTimer);
         }
     });
+
+    async function initFormats(): Promise<void> {
+        try {
+            const writable = await getWritableFormats();
+            availableFormats = Array.from(writable);
+            if (source && !availableFormats.includes(format)) {
+                format = availableFormats[0] ?? "png";
+            }
+        } catch {
+            // Keep the default set; getWritableFormats already falls back.
+        }
+    }
+
+    // Dispatches a fully-reassembled inbound byte stream from the host.
+    async function handleInbound(
+        meta: InboundMeta,
+        bytes: Uint8Array,
+    ): Promise<void> {
+        console.log(
+            "[ImageMagick] inbound complete:",
+            meta.kind,
+            bytes.length,
+            "bytes",
+        );
+        if (meta.kind === "load") {
+            await loadSource(bytes, meta.path, meta.name, meta.activeIndex);
+            return;
+        }
+        // meta.kind === "bulk": encode this source and stream the result back.
+        try {
+            const state = $state.snapshot(editorState) as EditorState;
+            const { bytes: outBytes } = await encodeBytes(bytes, state);
+            streamOutbound(
+                send,
+                { kind: "bulk", index: meta.index, name: meta.name },
+                outBytes,
+            );
+        } catch (err) {
+            errorMessage = describeError(err, `Failed to encode ${meta.name}`);
+            // Empty output so the host counts a failure and keeps going.
+            streamOutbound(
+                send,
+                { kind: "bulk", index: meta.index, name: meta.name },
+                new Uint8Array(0),
+            );
+        }
+    }
+
+    async function loadSource(
+        bytes: Uint8Array,
+        path: string | null,
+        name: string,
+        index: number,
+    ): Promise<void> {
+        try {
+            const info = await service.loadFromBytes(bytes, path, name);
+            console.log(
+                "[ImageMagick] source loaded:",
+                info.name,
+                `${info.width}x${info.height}`,
+                info.format,
+            );
+            source = info;
+            activeIndex = index;
+            previewMeta = {
+                width: info.width,
+                height: info.height,
+                sizeKb: 0,
+            };
+            errorMessage = null;
+            // First image of the session seeds the target format; switching
+            // between bulk files keeps the user's chosen pipeline.
+            if (!hasLoadedOnce) {
+                hasLoadedOnce = true;
+                const guessed = guessFormat(info.format);
+                format = availableFormats.includes(guessed) ? guessed : format;
+            }
+            // The $effect on `source` will render the preview.
+        } catch (err) {
+            errorMessage = describeError(err, `Could not open ${name}`);
+        }
+    }
+
+    function describeError(err: unknown, fallback: string): string {
+        if (err instanceof Error) {
+            return err.message || fallback;
+        }
+        if (typeof err === "string") {
+            return err;
+        }
+        return fallback;
+    }
 
     function guessFormat(raw: string): ImageFormat {
         const f = raw.toLowerCase();
@@ -216,28 +309,39 @@
         return "png";
     }
 
-    function handleSave() {
-        if (!source) {
+    async function handleSave() {
+        if (!source || saving) {
             return;
         }
         saving = true;
-        saveStatus = "Preparing…";
-        send({
-            type: "requestSave",
-            data: $state.snapshot(editorState) as EditorState,
-        });
+        saveStatus = "Encoding…";
+        try {
+            const state = $state.snapshot(editorState) as EditorState;
+            const { bytes } = await service.encode(state);
+            streamOutbound(
+                send,
+                {
+                    kind: "save",
+                    name: source.name,
+                    path: source.path,
+                    format: state.format,
+                },
+                bytes,
+            );
+        } catch (err) {
+            saving = false;
+            saveStatus = null;
+            errorMessage = describeError(err, "Failed to encode image");
+        }
     }
 
     function handleBulkSave() {
-        if (!source || bulkFiles.length < 2) {
+        if (!source || bulkFiles.length < 2 || saving) {
             return;
         }
         saving = true;
         saveStatus = "Preparing…";
-        send({
-            type: "requestBulkSave",
-            data: $state.snapshot(editorState) as EditorState,
-        });
+        send({ type: "requestBulkSave" });
     }
 
     function handleReset() {
@@ -264,13 +368,21 @@
     }
 
     function handleDropFile(file: File) {
-        file.arrayBuffer().then((buf) => {
-            const bytes = Array.from(new Uint8Array(buf));
-            // Drag-drop replaces the bulk session with a single buffer source.
-            bulkFiles = [];
-            activeIndex = 0;
-            send({ type: "dropFile", data: { name: file.name, bytes } });
-        });
+        // Drag-drop replaces the bulk session with a single buffer source,
+        // loaded directly here without a round-trip to the host.
+        file.arrayBuffer()
+            .then((buf) => {
+                bulkFiles = [];
+                return loadSource(
+                    new Uint8Array(buf),
+                    null,
+                    file.name,
+                    0,
+                );
+            })
+            .catch((err: unknown) => {
+                errorMessage = describeError(err, `Could not open ${file.name}`);
+            });
     }
 </script>
 

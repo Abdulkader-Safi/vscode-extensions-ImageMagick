@@ -2,9 +2,35 @@ const esbuild = require("esbuild");
 const esbuildSvelte = require("esbuild-svelte");
 const { sveltePreprocess } = require("svelte-preprocess");
 const { spawn } = require("child_process");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const production = process.argv.includes("--production");
 const watch = process.argv.includes("--watch");
+
+// The ImageMagick engine (@imagemagick/magick-wasm) runs inside the webview.
+// Its JS is bundled into webview.js by esbuild; only the wasm module is copied
+// into dist/ and fetched at runtime via a webview resource URI.
+function copyMagickAssets() {
+  const srcPath = path.resolve(
+    __dirname,
+    "node_modules",
+    "@imagemagick",
+    "magick-wasm",
+    "dist",
+    "magick.wasm",
+  );
+  const distDir = path.resolve(__dirname, "dist");
+  fs.mkdirSync(distDir, { recursive: true });
+
+  if (!fs.existsSync(srcPath)) {
+    throw new Error(
+      `Missing ${srcPath}. Run \`npm install\` so the ImageMagick wasm is present before packaging.`,
+    );
+  }
+  fs.copyFileSync(srcPath, path.join(distDir, "magick.wasm"));
+  console.log("[build] copied magick.wasm into dist/");
+}
 
 /**
  * @type {import('esbuild').Plugin}
@@ -82,7 +108,8 @@ async function main() {
     sourcesContent: false,
     platform: "node",
     outfile: "dist/extension.js",
-    external: ["vscode", "magickwand.js", "magickwand.js/native"],
+    // The host no longer touches magickwand — the engine lives in the webview.
+    external: ["vscode"],
     logLevel: "silent",
     plugins: [esbuildProblemMatcherPlugin],
   });
@@ -113,9 +140,11 @@ async function main() {
   });
 
   if (watch) {
+    copyMagickAssets();
     await Promise.all([extensionCtx.watch(), webviewCtx.watch()]);
   } else {
     await Promise.all([extensionCtx.rebuild(), webviewCtx.rebuild()]);
+    copyMagickAssets();
     await extensionCtx.dispose();
     await webviewCtx.dispose();
   }

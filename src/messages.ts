@@ -47,30 +47,46 @@ export interface EditorState {
   quality: number;
 }
 
-/** Messages sent host → webview. */
+/**
+ * What a completed inbound (host → webview) byte stream should become.
+ *  - `load`: a source image to open in the editor.
+ *  - `bulk`: a source image to encode for a bulk save (webview streams the
+ *    result back as an outbound `bulk` blob).
+ */
+export type InboundMeta =
+  | { kind: "load"; name: string; path: string | null; activeIndex: number }
+  | { kind: "bulk"; index: number; name: string };
+
+/** What a completed outbound (webview → host) byte stream should become. */
+export type OutboundMeta =
+  | { kind: "save"; name: string; path: string | null; format: ImageFormat }
+  | { kind: "bulk"; index: number; name: string };
+
+/**
+ * Messages sent host → webview.
+ *
+ * The image engine (ImageMagick WASM) lives in the webview; the host reads
+ * source bytes off disk, runs save dialogs, and writes the encoded output.
+ *
+ * Image bytes never travel in a single message. VS Code's webview transport
+ * drops oversized message fields (a big base64 payload vanished on Windows) and
+ * forbids `fetch()` of arbitrary on-disk resources (403 on both platforms). So
+ * bytes are streamed as a sequence of small base64 chunks (`*Begin` + `*Chunk`)
+ * that the other side reassembles. Each chunk is well under any size limit.
+ */
 export type HostToWebviewMessage =
-  | { type: "formatsAvailable"; data: { formats: ImageFormat[] } }
-  | { type: "imageLoaded"; data: SourceInfo & { previewDataUrl: string } }
-  | {
-      type: "previewUpdated";
-      data: {
-        previewDataUrl: string;
-        width: number;
-        height: number;
-        sizeKb: number;
-      };
-    }
-  | { type: "saveStatus"; data: { message: string } }
-  | { type: "saveDone"; data: { path: string; sizeKb: number } }
-  | { type: "saveCanceled" }
+  /** Start of an inbound byte stream; `meta` says what to do once it's whole. */
+  | { type: "inBegin"; data: { id: number; total: number; meta: InboundMeta } }
+  /** One ordered base64 chunk of inbound stream `id`. */
+  | { type: "inChunk"; data: { id: number; b64: string } }
+  /** The bulk file list (names + paths) shown in the sidebar. */
   | {
       type: "bulkInfo";
       data: { files: BulkFileInfo[]; activeIndex: number };
     }
-  | {
-      type: "bulkActiveChanged";
-      data: SourceInfo & { activeIndex: number };
-    }
+  | { type: "saveStatus"; data: { message: string } }
+  | { type: "saveDone"; data: { path: string; sizeKb: number } }
+  | { type: "saveCanceled" }
   | {
       type: "bulkSaveProgress";
       data: { current: number; total: number; name: string };
@@ -84,8 +100,11 @@ export type HostToWebviewMessage =
 /** Messages sent webview → host. */
 export type WebviewToHostMessage =
   | { type: "ready" }
-  | { type: "requestPreview"; data: EditorState }
-  | { type: "requestSave"; data: EditorState }
-  | { type: "requestBulkSave"; data: EditorState }
+  /** Ask the host to load a different file from the bulk list; it streams it back. */
   | { type: "selectBulkFile"; data: { index: number } }
-  | { type: "dropFile"; data: { name: string; bytes: number[] } };
+  /** Begin a bulk save: the host shows a folder dialog, then streams each source in. */
+  | { type: "requestBulkSave" }
+  /** Start of an outbound byte stream (encoded output); `meta` says what to do with it. */
+  | { type: "outBegin"; data: { id: number; total: number; meta: OutboundMeta } }
+  /** One ordered base64 chunk of outbound stream `id`. */
+  | { type: "outChunk"; data: { id: number; b64: string } };
