@@ -5,6 +5,8 @@
         ImageService,
         getWritableFormats,
         encodeBytes,
+        bytesToBase64,
+        base64ToBytes,
     } from "../engine/imageEngine";
     import type {
         BulkFileInfo,
@@ -131,7 +133,7 @@
                     break;
                 case "fileBytes":
                     void loadSource(
-                        msg.data.bytes,
+                        base64ToBytes(msg.data.b64),
                         msg.data.path,
                         msg.data.name,
                         msg.data.activeIndex,
@@ -141,7 +143,7 @@
                     void handleBulkEncode(
                         msg.data.index,
                         msg.data.name,
-                        msg.data.bytes,
+                        msg.data.b64,
                     );
                     break;
                 case "saveStatus":
@@ -226,22 +228,25 @@
     async function handleBulkEncode(
         index: number,
         name: string,
-        bytes: Uint8Array,
+        b64: string,
     ): Promise<void> {
         try {
             const state = $state.snapshot(editorState) as EditorState;
-            const { bytes: outBytes } = await encodeBytes(bytes, state);
+            const { bytes: outBytes } = await encodeBytes(
+                base64ToBytes(b64),
+                state,
+            );
             send({
                 type: "bulkEncoded",
-                data: { index, name, outBytes },
+                data: { index, name, outB64: bytesToBase64(outBytes) },
             });
         } catch (err) {
-            // Reply with empty bytes so the host counts it as a failure and
+            // Reply with empty output so the host counts it as a failure and
             // moves on instead of hanging the whole bulk run.
             errorMessage = describeError(err, `Failed to encode ${name}`);
             send({
                 type: "bulkEncoded",
-                data: { index, name, outBytes: new Uint8Array(0) },
+                data: { index, name, outB64: "" },
             });
         }
     }
@@ -297,7 +302,7 @@
                     name: source.name,
                     path: source.path,
                     format: state.format,
-                    bytes,
+                    b64: bytesToBase64(bytes),
                 },
             });
         } catch (err) {

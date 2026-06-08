@@ -54,6 +54,10 @@ export interface EditorState {
  * is narrow: read source bytes off disk, hand them to the webview, run save
  * dialogs, and write the encoded bytes the webview returns. It never decodes
  * or encodes an image itself.
+ *
+ * Image bytes cross this boundary as base64 strings (`b64`). VS Code's webview
+ * postMessage does not reliably preserve `Uint8Array` through its serializer —
+ * it can arrive as a plain object — so strings are the portable choice.
  */
 export type HostToWebviewMessage =
   /** Source image to load. The webview decodes it, derives `SourceInfo`, and renders its own preview. */
@@ -62,7 +66,7 @@ export type HostToWebviewMessage =
       data: {
         name: string;
         path: string | null;
-        bytes: Uint8Array;
+        b64: string;
         /** Index in the bulk list this byte payload corresponds to (0 in single-file mode). */
         activeIndex: number;
       };
@@ -75,7 +79,7 @@ export type HostToWebviewMessage =
   /** Per-file source bytes during a bulk save; the webview encodes and replies with `bulkEncoded`. */
   | {
       type: "bulkEncode";
-      data: { index: number; name: string; bytes: Uint8Array };
+      data: { index: number; name: string; b64: string };
     }
   | { type: "saveStatus"; data: { message: string } }
   | { type: "saveDone"; data: { path: string; sizeKb: number } }
@@ -95,20 +99,20 @@ export type WebviewToHostMessage =
   | { type: "ready" }
   /** Ask the host to load a different file from the bulk list; it replies with `fileBytes`. */
   | { type: "selectBulkFile"; data: { index: number } }
-  /** Encoded single-image output for the host to run a save dialog on and write to disk. */
+  /** Encoded single-image output (base64) for the host to run a save dialog on and write to disk. */
   | {
       type: "saveBytes";
       data: {
         name: string;
         path: string | null;
         format: ImageFormat;
-        bytes: Uint8Array;
+        b64: string;
       };
     }
   /** Begin a bulk save: the host shows a folder dialog, then streams `bulkEncode` per file. */
   | { type: "requestBulkSave" }
-  /** Reply to a `bulkEncode` request with the encoded bytes for the host to write. */
+  /** Reply to a `bulkEncode` request with the encoded bytes (base64) for the host to write. */
   | {
       type: "bulkEncoded";
-      data: { index: number; name: string; outBytes: Uint8Array };
+      data: { index: number; name: string; outB64: string };
     };

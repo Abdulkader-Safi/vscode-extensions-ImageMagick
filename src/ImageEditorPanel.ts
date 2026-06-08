@@ -46,8 +46,8 @@ export class ImageEditorPanel {
   private bulkUris: vscode.Uri[] = [];
   /** Index of the currently-loaded image in `bulkUris` (or 0 in single mode). */
   private activeIndex = 0;
-  /** Resolvers for in-flight `bulkEncode` round-trips, keyed by file index. */
-  private pendingBulkEncode = new Map<number, (out: Uint8Array) => void>();
+  /** Resolvers for in-flight `bulkEncode` round-trips (base64 output), keyed by file index. */
+  private pendingBulkEncode = new Map<number, (outB64: string) => void>();
 
   static createOrShow(
     extensionUri: vscode.Uri,
@@ -145,7 +145,7 @@ export class ImageEditorPanel {
         const resolve = this.pendingBulkEncode.get(msg.data.index);
         if (resolve) {
           this.pendingBulkEncode.delete(msg.data.index);
-          resolve(msg.data.outBytes);
+          resolve(msg.data.outB64);
         }
         return;
       }
@@ -164,7 +164,7 @@ export class ImageEditorPanel {
         data: {
           name: path.basename(uri.fsPath),
           path: uri.fsPath,
-          bytes,
+          b64: Buffer.from(bytes).toString("base64"),
           activeIndex,
         },
       });
@@ -218,8 +218,9 @@ export class ImageEditorPanel {
 
     log.appendLine(`save: writing to ${dest.fsPath}`);
     try {
-      await vscode.workspace.fs.writeFile(dest, msg.data.bytes);
-      const sizeKb = Math.round(msg.data.bytes.byteLength / 1024);
+      const bytes = Buffer.from(msg.data.b64, "base64");
+      await vscode.workspace.fs.writeFile(dest, bytes);
+      const sizeKb = Math.round(bytes.byteLength / 1024);
       log.appendLine(`save: done (${sizeKb} KB)`);
       this.post({ type: "saveDone", data: { path: dest.fsPath, sizeKb } });
       vscode.window.showInformationMessage(
@@ -278,7 +279,12 @@ export class ImageEditorPanel {
       });
       try {
         const sourceBytes = await vscode.workspace.fs.readFile(uri);
-        const outBytes = await this.requestBulkEncode(i, name, sourceBytes);
+        const outB64 = await this.requestBulkEncode(
+          i,
+          name,
+          Buffer.from(sourceBytes).toString("base64"),
+        );
+        const outBytes = Buffer.from(outB64, "base64");
         // The webview applied a uniform format across the run; sniff the output
         // bytes for the right extension so converted images land named correctly.
         const finalPath = withOptimizedSuffix(
@@ -319,9 +325,9 @@ export class ImageEditorPanel {
   private requestBulkEncode(
     index: number,
     name: string,
-    bytes: Uint8Array,
-  ): Promise<Uint8Array> {
-    return new Promise<Uint8Array>((resolve, reject) => {
+    b64: string,
+  ): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingBulkEncode.delete(index);
         reject(new Error(`Timed out encoding ${name}`));
@@ -330,7 +336,7 @@ export class ImageEditorPanel {
         clearTimeout(timer);
         resolve(out);
       });
-      this.post({ type: "bulkEncode", data: { index, name, bytes } });
+      this.post({ type: "bulkEncode", data: { index, name, b64 } });
     });
   }
 
