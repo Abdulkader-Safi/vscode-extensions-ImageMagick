@@ -141,21 +141,12 @@ function toBase64(bytes: Uint8Array): string {
 }
 
 /**
- * Image bytes cross the webview/host boundary as base64 — VS Code's webview
- * postMessage doesn't reliably preserve `Uint8Array`. These helpers convert at
- * that edge.
+ * Encoded output crosses the webview → host boundary as base64 (the host
+ * decodes it with Node's Buffer). Source images go the other way as resource
+ * URIs the webview fetches, so no base64 decode is needed in the webview.
  */
 export function bytesToBase64(bytes: Uint8Array): string {
   return toBase64(bytes);
-}
-
-export function base64ToBytes(b64: string): Uint8Array {
-  const binary = atob(b64);
-  const out = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    out[i] = binary.charCodeAt(i);
-  }
-  return out;
 }
 
 /**

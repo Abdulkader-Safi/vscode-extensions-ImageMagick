@@ -6,7 +6,6 @@
         getWritableFormats,
         encodeBytes,
         bytesToBase64,
-        base64ToBytes,
     } from "../engine/imageEngine";
     import type {
         BulkFileInfo,
@@ -132,8 +131,8 @@
                     activeIndex = msg.data.activeIndex;
                     break;
                 case "fileBytes":
-                    void loadSource(
-                        base64ToBytes(msg.data.b64),
+                    void loadFromUri(
+                        msg.data.uri,
                         msg.data.path,
                         msg.data.name,
                         msg.data.activeIndex,
@@ -143,7 +142,7 @@
                     void handleBulkEncode(
                         msg.data.index,
                         msg.data.name,
-                        msg.data.b64,
+                        msg.data.uri,
                     );
                     break;
                 case "saveStatus":
@@ -196,6 +195,28 @@
         }
     }
 
+    async function fetchBytes(uri: string): Promise<Uint8Array> {
+        const response = await fetch(uri);
+        if (!response.ok) {
+            throw new Error(`Failed to load image (HTTP ${response.status})`);
+        }
+        return new Uint8Array(await response.arrayBuffer());
+    }
+
+    async function loadFromUri(
+        uri: string,
+        path: string | null,
+        name: string,
+        index: number,
+    ): Promise<void> {
+        try {
+            const bytes = await fetchBytes(uri);
+            await loadSource(bytes, path, name, index);
+        } catch (err) {
+            errorMessage = describeError(err, `Could not open ${name}`);
+        }
+    }
+
     async function loadSource(
         bytes: Uint8Array,
         path: string | null,
@@ -228,14 +249,12 @@
     async function handleBulkEncode(
         index: number,
         name: string,
-        b64: string,
+        uri: string,
     ): Promise<void> {
         try {
+            const bytes = await fetchBytes(uri);
             const state = $state.snapshot(editorState) as EditorState;
-            const { bytes: outBytes } = await encodeBytes(
-                base64ToBytes(b64),
-                state,
-            );
+            const { bytes: outBytes } = await encodeBytes(bytes, state);
             send({
                 type: "bulkEncoded",
                 data: { index, name, outB64: bytesToBase64(outBytes) },

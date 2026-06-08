@@ -62,13 +62,26 @@ export class ImageEditorPanel {
         : uris[0]
           ? path.basename(uris[0].fsPath)
           : "ImageMagick";
+    // The webview fetches source images directly via resource URIs, so every
+    // folder holding one of those images must be a localResourceRoot (alongside
+    // dist/, which holds the bundle + wasm).
+    const roots = [vscode.Uri.joinPath(extensionUri, "dist")];
+    const seenDirs = new Set<string>();
+    for (const u of uris) {
+      const dir = path.dirname(u.fsPath);
+      if (!seenDirs.has(dir)) {
+        seenDirs.add(dir);
+        roots.push(vscode.Uri.file(dir));
+      }
+    }
+
     const panel = vscode.window.createWebviewPanel(
       ImageEditorPanel.viewType,
       title,
       column,
       {
         enableScripts: true,
-        localResourceRoots: [vscode.Uri.joinPath(extensionUri, "dist")],
+        localResourceRoots: roots,
         retainContextWhenHidden: true,
       },
     );
@@ -156,22 +169,16 @@ export class ImageEditorPanel {
     uri: vscode.Uri,
     activeIndex: number,
   ): Promise<void> {
-    try {
-      const bytes = await vscode.workspace.fs.readFile(uri);
-      this.activeIndex = activeIndex;
-      this.post({
-        type: "fileBytes",
-        data: {
-          name: path.basename(uri.fsPath),
-          path: uri.fsPath,
-          b64: Buffer.from(bytes).toString("base64"),
-          activeIndex,
-        },
-      });
-    } catch (err) {
-      this.logException(err, `readFile ${uri.fsPath}`);
-      this.postError(this.errorMessage(err, `Could not open ${uri.fsPath}`));
-    }
+    this.activeIndex = activeIndex;
+    this.post({
+      type: "fileBytes",
+      data: {
+        name: path.basename(uri.fsPath),
+        path: uri.fsPath,
+        uri: this.panel.webview.asWebviewUri(uri).toString(),
+        activeIndex,
+      },
+    });
   }
 
   private async handleSelectBulkFile(index: number): Promise<void> {
@@ -278,11 +285,10 @@ export class ImageEditorPanel {
         data: { current: i + 1, total: this.bulkUris.length, name },
       });
       try {
-        const sourceBytes = await vscode.workspace.fs.readFile(uri);
         const outB64 = await this.requestBulkEncode(
           i,
           name,
-          Buffer.from(sourceBytes).toString("base64"),
+          this.panel.webview.asWebviewUri(uri).toString(),
         );
         const outBytes = Buffer.from(outB64, "base64");
         // The webview applied a uniform format across the run; sniff the output
@@ -325,7 +331,7 @@ export class ImageEditorPanel {
   private requestBulkEncode(
     index: number,
     name: string,
-    b64: string,
+    uri: string,
   ): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -336,7 +342,7 @@ export class ImageEditorPanel {
         clearTimeout(timer);
         resolve(out);
       });
-      this.post({ type: "bulkEncode", data: { index, name, b64 } });
+      this.post({ type: "bulkEncode", data: { index, name, uri } });
     });
   }
 

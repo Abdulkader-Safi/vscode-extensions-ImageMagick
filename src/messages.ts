@@ -55,19 +55,22 @@ export interface EditorState {
  * dialogs, and write the encoded bytes the webview returns. It never decodes
  * or encodes an image itself.
  *
- * Image bytes cross this boundary as base64 strings (`b64`). VS Code's webview
- * postMessage does not reliably preserve `Uint8Array` through its serializer —
- * it can arrive as a plain object — so strings are the portable choice.
+ * Source images are NOT shipped through postMessage — the host exposes each one
+ * as a webview resource URI and the webview fetches the bytes directly. That
+ * sidesteps both the serializer's poor `Uint8Array` support and the size limit
+ * on a single message (a large base64 payload gets dropped/truncated). Only the
+ * encoded output travels back as base64, which the host decodes with Node's
+ * (lenient) Buffer.
  */
 export type HostToWebviewMessage =
-  /** Source image to load. The webview decodes it, derives `SourceInfo`, and renders its own preview. */
+  /** Source image to load, as a webview resource URI the webview fetches itself. */
   | {
       type: "fileBytes";
       data: {
         name: string;
         path: string | null;
-        b64: string;
-        /** Index in the bulk list this byte payload corresponds to (0 in single-file mode). */
+        uri: string;
+        /** Index in the bulk list this payload corresponds to (0 in single-file mode). */
         activeIndex: number;
       };
     }
@@ -76,10 +79,10 @@ export type HostToWebviewMessage =
       type: "bulkInfo";
       data: { files: BulkFileInfo[]; activeIndex: number };
     }
-  /** Per-file source bytes during a bulk save; the webview encodes and replies with `bulkEncoded`. */
+  /** Per-file source URI during a bulk save; the webview fetches + encodes and replies with `bulkEncoded`. */
   | {
       type: "bulkEncode";
-      data: { index: number; name: string; b64: string };
+      data: { index: number; name: string; uri: string };
     }
   | { type: "saveStatus"; data: { message: string } }
   | { type: "saveDone"; data: { path: string; sizeKb: number } }
