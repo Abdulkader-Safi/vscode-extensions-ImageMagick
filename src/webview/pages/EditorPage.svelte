@@ -5,13 +5,14 @@
         ImageService,
         getWritableFormats,
         encodeBytes,
-        bytesToBase64,
     } from "../engine/imageEngine";
+    import { streamOutbound, InboundAssembler } from "../transport";
     import type {
         BulkFileInfo,
         CropRect,
         EditorState,
         ImageFormat,
+        InboundMeta,
         ResizeSpec,
         SourceInfo,
     } from "../../messages";
@@ -28,6 +29,7 @@
     // page owns one ImageService for the active edit session and talks to the
     // host only to read source bytes and write encoded output.
     const service = new ImageService();
+    const inbound = new InboundAssembler();
 
     let source = $state<SourceInfo | null>(null);
     let availableFormats = $state<ImageFormat[]>([
@@ -130,21 +132,20 @@
                     bulkFiles = msg.data.files;
                     activeIndex = msg.data.activeIndex;
                     break;
-                case "fileBytes":
-                    void loadFromUri(
-                        msg.data.uri,
-                        msg.data.path,
-                        msg.data.name,
-                        msg.data.activeIndex,
+                case "inBegin":
+                    inbound.begin(
+                        msg.data.id,
+                        msg.data.total,
+                        msg.data.meta,
                     );
                     break;
-                case "bulkEncode":
-                    void handleBulkEncode(
-                        msg.data.index,
-                        msg.data.name,
-                        msg.data.uri,
-                    );
+                case "inChunk": {
+                    const done = inbound.chunk(msg.data.id, msg.data.b64);
+                    if (done) {
+                        void handleInbound(done.meta, done.bytes);
+                    }
                     break;
+                }
                 case "saveStatus":
                     saveStatus = msg.data.message;
                     break;
@@ -195,25 +196,32 @@
         }
     }
 
-    async function fetchBytes(uri: string): Promise<Uint8Array> {
-        const response = await fetch(uri);
-        if (!response.ok) {
-            throw new Error(`Failed to load image (HTTP ${response.status})`);
-        }
-        return new Uint8Array(await response.arrayBuffer());
-    }
-
-    async function loadFromUri(
-        uri: string,
-        path: string | null,
-        name: string,
-        index: number,
+    // Dispatches a fully-reassembled inbound byte stream from the host.
+    async function handleInbound(
+        meta: InboundMeta,
+        bytes: Uint8Array,
     ): Promise<void> {
+        if (meta.kind === "load") {
+            await loadSource(bytes, meta.path, meta.name, meta.activeIndex);
+            return;
+        }
+        // meta.kind === "bulk": encode this source and stream the result back.
         try {
-            const bytes = await fetchBytes(uri);
-            await loadSource(bytes, path, name, index);
+            const state = $state.snapshot(editorState) as EditorState;
+            const { bytes: outBytes } = await encodeBytes(bytes, state);
+            streamOutbound(
+                send,
+                { kind: "bulk", index: meta.index, name: meta.name },
+                outBytes,
+            );
         } catch (err) {
-            errorMessage = describeError(err, `Could not open ${name}`);
+            errorMessage = describeError(err, `Failed to encode ${meta.name}`);
+            // Empty output so the host counts a failure and keeps going.
+            streamOutbound(
+                send,
+                { kind: "bulk", index: meta.index, name: meta.name },
+                new Uint8Array(0),
+            );
         }
     }
 
@@ -243,30 +251,6 @@
             // The $effect on `source` will render the preview.
         } catch (err) {
             errorMessage = describeError(err, `Could not open ${name}`);
-        }
-    }
-
-    async function handleBulkEncode(
-        index: number,
-        name: string,
-        uri: string,
-    ): Promise<void> {
-        try {
-            const bytes = await fetchBytes(uri);
-            const state = $state.snapshot(editorState) as EditorState;
-            const { bytes: outBytes } = await encodeBytes(bytes, state);
-            send({
-                type: "bulkEncoded",
-                data: { index, name, outB64: bytesToBase64(outBytes) },
-            });
-        } catch (err) {
-            // Reply with empty output so the host counts it as a failure and
-            // moves on instead of hanging the whole bulk run.
-            errorMessage = describeError(err, `Failed to encode ${name}`);
-            send({
-                type: "bulkEncoded",
-                data: { index, name, outB64: "" },
-            });
         }
     }
 
@@ -315,15 +299,16 @@
         try {
             const state = $state.snapshot(editorState) as EditorState;
             const { bytes } = await service.encode(state);
-            send({
-                type: "saveBytes",
-                data: {
+            streamOutbound(
+                send,
+                {
+                    kind: "save",
                     name: source.name,
                     path: source.path,
                     format: state.format,
-                    b64: bytesToBase64(bytes),
                 },
-            });
+                bytes,
+            );
         } catch (err) {
             saving = false;
             saveStatus = null;

@@ -4,6 +4,8 @@ import { getOutputChannel } from "./extension";
 import type {
   HostToWebviewMessage,
   ImageFormat,
+  InboundMeta,
+  OutboundMeta,
   WebviewToHostMessage,
 } from "./messages";
 
@@ -27,11 +29,20 @@ const FORMAT_FILTER_LABELS: Record<ImageFormat, string> = {
   bmp: "BMP",
 };
 
+// Raw bytes per inbound chunk. ~64 KB base64 per message — small enough that
+// VS Code's webview transport never drops or truncates it.
+const CHUNK = 48 * 1024;
+
 /**
  * Hosts the image-editor webview. The actual image work (decode, transform,
  * encode) runs inside the webview on the ImageMagick WASM build — this class is
- * a thin broker that reads source bytes off disk, hands them to the webview,
+ * a thin broker that reads source bytes off disk, streams them to the webview,
  * runs the save dialogs, and writes back the encoded bytes the webview returns.
+ *
+ * Bytes move in both directions as a sequence of small base64 chunks rather
+ * than one message: VS Code's webview transport drops oversized message fields
+ * and forbids fetch() of arbitrary on-disk files, so streaming is the portable
+ * way to move image data.
  */
 export class ImageEditorPanel {
   private static readonly viewType = "imagemagickEditor";
@@ -46,8 +57,15 @@ export class ImageEditorPanel {
   private bulkUris: vscode.Uri[] = [];
   /** Index of the currently-loaded image in `bulkUris` (or 0 in single mode). */
   private activeIndex = 0;
-  /** Resolvers for in-flight `bulkEncode` round-trips (base64 output), keyed by file index. */
-  private pendingBulkEncode = new Map<number, (outB64: string) => void>();
+  /** Monotonic id for inbound (host → webview) byte streams. */
+  private streamSeq = 0;
+  /** Reassembly state for outbound (webview → host) byte streams, keyed by id. */
+  private outbound = new Map<
+    number,
+    { meta: OutboundMeta; total: number; parts: Buffer[] }
+  >();
+  /** Resolvers for in-flight bulk encodes, keyed by file index. */
+  private pendingBulkEncode = new Map<number, (out: Buffer) => void>();
 
   static createOrShow(
     extensionUri: vscode.Uri,
@@ -62,18 +80,6 @@ export class ImageEditorPanel {
         : uris[0]
           ? path.basename(uris[0].fsPath)
           : "ImageMagick";
-    // The webview fetches source images directly via resource URIs, so every
-    // folder holding one of those images must be a localResourceRoot (alongside
-    // dist/, which holds the bundle + wasm).
-    const roots = [vscode.Uri.joinPath(extensionUri, "dist")];
-    const seenDirs = new Set<string>();
-    for (const u of uris) {
-      const dir = path.dirname(u.fsPath);
-      if (!seenDirs.has(dir)) {
-        seenDirs.add(dir);
-        roots.push(vscode.Uri.file(dir));
-      }
-    }
 
     const panel = vscode.window.createWebviewPanel(
       ImageEditorPanel.viewType,
@@ -81,7 +87,7 @@ export class ImageEditorPanel {
       column,
       {
         enableScripts: true,
-        localResourceRoots: roots,
+        localResourceRoots: [vscode.Uri.joinPath(extensionUri, "dist")],
         retainContextWhenHidden: true,
       },
     );
@@ -141,67 +147,100 @@ export class ImageEditorPanel {
           });
         }
         if (this.pendingUris[0]) {
-          await this.sendFileBytes(this.pendingUris[0], 0);
+          await this.sendSource(this.pendingUris[0], 0);
         }
         this.pendingUris = [];
         return;
       case "selectBulkFile":
         await this.handleSelectBulkFile(msg.data.index);
         return;
-      case "saveBytes":
-        await this.handleSave(msg);
-        return;
       case "requestBulkSave":
         await this.handleBulkSave();
         return;
-      case "bulkEncoded": {
-        const resolve = this.pendingBulkEncode.get(msg.data.index);
-        if (resolve) {
-          this.pendingBulkEncode.delete(msg.data.index);
-          resolve(msg.data.outB64);
+      case "outBegin":
+        this.outbound.set(msg.data.id, {
+          meta: msg.data.meta,
+          total: msg.data.total,
+          parts: [],
+        });
+        return;
+      case "outChunk": {
+        const entry = this.outbound.get(msg.data.id);
+        if (!entry) {
+          return;
         }
+        entry.parts.push(Buffer.from(msg.data.b64, "base64"));
+        if (entry.parts.length < entry.total) {
+          return;
+        }
+        this.outbound.delete(msg.data.id);
+        await this.onOutboundComplete(entry.meta, Buffer.concat(entry.parts));
         return;
       }
     }
   }
 
-  private async sendFileBytes(
+  /** Reads a source image off disk and streams it to the webview to open. */
+  private async sendSource(
     uri: vscode.Uri,
     activeIndex: number,
   ): Promise<void> {
-    this.activeIndex = activeIndex;
-    this.post({
-      type: "fileBytes",
-      data: {
-        name: path.basename(uri.fsPath),
-        path: uri.fsPath,
-        uri: this.panel.webview.asWebviewUri(uri).toString(),
-        activeIndex,
-      },
-    });
+    try {
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      this.activeIndex = activeIndex;
+      this.streamInbound(
+        {
+          kind: "load",
+          name: path.basename(uri.fsPath),
+          path: uri.fsPath,
+          activeIndex,
+        },
+        bytes,
+      );
+    } catch (err) {
+      this.logException(err, `readFile ${uri.fsPath}`);
+      this.postError(this.errorMessage(err, `Could not open ${uri.fsPath}`));
+    }
   }
 
   private async handleSelectBulkFile(index: number): Promise<void> {
     if (index < 0 || index >= this.bulkUris.length) {
       return;
     }
-    await this.sendFileBytes(this.bulkUris[index], index);
+    await this.sendSource(this.bulkUris[index], index);
   }
 
-  private async handleSave(
-    msg: Extract<WebviewToHostMessage, { type: "saveBytes" }>,
+  private async onOutboundComplete(
+    meta: OutboundMeta,
+    bytes: Buffer,
+  ): Promise<void> {
+    if (meta.kind === "save") {
+      await this.handleSaveComplete(meta, bytes);
+      return;
+    }
+    // meta.kind === "bulk": hand the encoded bytes to the waiting bulk loop.
+    const resolve = this.pendingBulkEncode.get(meta.index);
+    if (resolve) {
+      this.pendingBulkEncode.delete(meta.index);
+      resolve(bytes);
+    }
+  }
+
+  private async handleSaveComplete(
+    meta: Extract<OutboundMeta, { kind: "save" }>,
+    bytes: Buffer,
   ): Promise<void> {
     const log = getOutputChannel();
-    const ext = FORMAT_EXTENSIONS[msg.data.format];
-    const baseName = stripExtension(msg.data.name) + ".optimized." + ext;
-    const defaultDir = msg.data.path
-      ? vscode.Uri.file(path.dirname(msg.data.path))
+    const ext = FORMAT_EXTENSIONS[meta.format];
+    const baseName = stripExtension(meta.name) + ".optimized." + ext;
+    const defaultDir = meta.path
+      ? vscode.Uri.file(path.dirname(meta.path))
       : (vscode.workspace.workspaceFolders?.[0]?.uri ??
         vscode.Uri.file(process.cwd()));
     const defaultUri = vscode.Uri.joinPath(defaultDir, baseName);
 
     log.appendLine(
-      `save: showing dialog (default=${defaultUri.fsPath}, format=${msg.data.format})`,
+      `save: showing dialog (default=${defaultUri.fsPath}, format=${meta.format})`,
     );
     this.postSaveStatus("Choose where to save…");
 
@@ -209,7 +248,7 @@ export class ImageEditorPanel {
     try {
       dest = await vscode.window.showSaveDialog({
         defaultUri,
-        filters: { [FORMAT_FILTER_LABELS[msg.data.format]]: [ext] },
+        filters: { [FORMAT_FILTER_LABELS[meta.format]]: [ext] },
       });
     } catch (err) {
       this.logException(err, "save: showSaveDialog");
@@ -225,7 +264,6 @@ export class ImageEditorPanel {
 
     log.appendLine(`save: writing to ${dest.fsPath}`);
     try {
-      const bytes = Buffer.from(msg.data.b64, "base64");
       await vscode.workspace.fs.writeFile(dest, bytes);
       const sizeKb = Math.round(bytes.byteLength / 1024);
       log.appendLine(`save: done (${sizeKb} KB)`);
@@ -285,14 +323,13 @@ export class ImageEditorPanel {
         data: { current: i + 1, total: this.bulkUris.length, name },
       });
       try {
-        const outB64 = await this.requestBulkEncode(
-          i,
-          name,
-          this.panel.webview.asWebviewUri(uri).toString(),
-        );
-        const outBytes = Buffer.from(outB64, "base64");
-        // The webview applied a uniform format across the run; sniff the output
-        // bytes for the right extension so converted images land named correctly.
+        const sourceBytes = await vscode.workspace.fs.readFile(uri);
+        const outBytes = await this.encodeViaWebview(i, name, sourceBytes);
+        if (outBytes.byteLength === 0) {
+          throw new Error("webview returned no output");
+        }
+        // Sniff the output's magic number for the right extension so converted
+        // images land named correctly, even though the host never decoded them.
         const finalPath = withOptimizedSuffix(
           path.join(folder.fsPath, name),
           outBytes,
@@ -324,16 +361,16 @@ export class ImageEditorPanel {
   }
 
   /**
-   * Ships one source's bytes to the webview for encoding and resolves with the
+   * Streams one source image to the webview for encoding and resolves with the
    * encoded output. Times out defensively so a dropped reply can't wedge the
    * whole bulk loop.
    */
-  private requestBulkEncode(
+  private encodeViaWebview(
     index: number,
     name: string,
-    uri: string,
-  ): Promise<string> {
-    return new Promise<string>((resolve, reject) => {
+    bytes: Uint8Array,
+  ): Promise<Buffer> {
+    return new Promise<Buffer>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingBulkEncode.delete(index);
         reject(new Error(`Timed out encoding ${name}`));
@@ -342,8 +379,22 @@ export class ImageEditorPanel {
         clearTimeout(timer);
         resolve(out);
       });
-      this.post({ type: "bulkEncode", data: { index, name, uri } });
+      this.streamInbound({ kind: "bulk", index, name }, bytes);
     });
+  }
+
+  /** Sends `bytes` to the webview as an inbound base64 chunk sequence. */
+  private streamInbound(meta: InboundMeta, bytes: Uint8Array): void {
+    const id = ++this.streamSeq;
+    const total = Math.max(1, Math.ceil(bytes.length / CHUNK));
+    this.post({ type: "inBegin", data: { id, total, meta } });
+    for (let i = 0; i < total; i++) {
+      const slice = bytes.subarray(i * CHUNK, (i + 1) * CHUNK);
+      this.post({
+        type: "inChunk",
+        data: { id, b64: Buffer.from(slice).toString("base64") },
+      });
+    }
   }
 
   private postSaveStatus(message: string): void {

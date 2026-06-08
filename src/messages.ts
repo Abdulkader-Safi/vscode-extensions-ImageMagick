@@ -48,41 +48,41 @@ export interface EditorState {
 }
 
 /**
+ * What a completed inbound (host → webview) byte stream should become.
+ *  - `load`: a source image to open in the editor.
+ *  - `bulk`: a source image to encode for a bulk save (webview streams the
+ *    result back as an outbound `bulk` blob).
+ */
+export type InboundMeta =
+  | { kind: "load"; name: string; path: string | null; activeIndex: number }
+  | { kind: "bulk"; index: number; name: string };
+
+/** What a completed outbound (webview → host) byte stream should become. */
+export type OutboundMeta =
+  | { kind: "save"; name: string; path: string | null; format: ImageFormat }
+  | { kind: "bulk"; index: number; name: string };
+
+/**
  * Messages sent host → webview.
  *
- * The image engine (ImageMagick WASM) lives in the webview, so the host's job
- * is narrow: read source bytes off disk, hand them to the webview, run save
- * dialogs, and write the encoded bytes the webview returns. It never decodes
- * or encodes an image itself.
+ * The image engine (ImageMagick WASM) lives in the webview; the host reads
+ * source bytes off disk, runs save dialogs, and writes the encoded output.
  *
- * Source images are NOT shipped through postMessage — the host exposes each one
- * as a webview resource URI and the webview fetches the bytes directly. That
- * sidesteps both the serializer's poor `Uint8Array` support and the size limit
- * on a single message (a large base64 payload gets dropped/truncated). Only the
- * encoded output travels back as base64, which the host decodes with Node's
- * (lenient) Buffer.
+ * Image bytes never travel in a single message. VS Code's webview transport
+ * drops oversized message fields (a big base64 payload vanished on Windows) and
+ * forbids `fetch()` of arbitrary on-disk resources (403 on both platforms). So
+ * bytes are streamed as a sequence of small base64 chunks (`*Begin` + `*Chunk`)
+ * that the other side reassembles. Each chunk is well under any size limit.
  */
 export type HostToWebviewMessage =
-  /** Source image to load, as a webview resource URI the webview fetches itself. */
-  | {
-      type: "fileBytes";
-      data: {
-        name: string;
-        path: string | null;
-        uri: string;
-        /** Index in the bulk list this payload corresponds to (0 in single-file mode). */
-        activeIndex: number;
-      };
-    }
+  /** Start of an inbound byte stream; `meta` says what to do once it's whole. */
+  | { type: "inBegin"; data: { id: number; total: number; meta: InboundMeta } }
+  /** One ordered base64 chunk of inbound stream `id`. */
+  | { type: "inChunk"; data: { id: number; b64: string } }
   /** The bulk file list (names + paths) shown in the sidebar. */
   | {
       type: "bulkInfo";
       data: { files: BulkFileInfo[]; activeIndex: number };
-    }
-  /** Per-file source URI during a bulk save; the webview fetches + encodes and replies with `bulkEncoded`. */
-  | {
-      type: "bulkEncode";
-      data: { index: number; name: string; uri: string };
     }
   | { type: "saveStatus"; data: { message: string } }
   | { type: "saveDone"; data: { path: string; sizeKb: number } }
@@ -100,22 +100,11 @@ export type HostToWebviewMessage =
 /** Messages sent webview → host. */
 export type WebviewToHostMessage =
   | { type: "ready" }
-  /** Ask the host to load a different file from the bulk list; it replies with `fileBytes`. */
+  /** Ask the host to load a different file from the bulk list; it streams it back. */
   | { type: "selectBulkFile"; data: { index: number } }
-  /** Encoded single-image output (base64) for the host to run a save dialog on and write to disk. */
-  | {
-      type: "saveBytes";
-      data: {
-        name: string;
-        path: string | null;
-        format: ImageFormat;
-        b64: string;
-      };
-    }
-  /** Begin a bulk save: the host shows a folder dialog, then streams `bulkEncode` per file. */
+  /** Begin a bulk save: the host shows a folder dialog, then streams each source in. */
   | { type: "requestBulkSave" }
-  /** Reply to a `bulkEncode` request with the encoded bytes (base64) for the host to write. */
-  | {
-      type: "bulkEncoded";
-      data: { index: number; name: string; outB64: string };
-    };
+  /** Start of an outbound byte stream (encoded output); `meta` says what to do with it. */
+  | { type: "outBegin"; data: { id: number; total: number; meta: OutboundMeta } }
+  /** One ordered base64 chunk of outbound stream `id`. */
+  | { type: "outChunk"; data: { id: number; b64: string } };
