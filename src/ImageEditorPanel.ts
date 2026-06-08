@@ -188,6 +188,9 @@ export class ImageEditorPanel {
     try {
       const bytes = await vscode.workspace.fs.readFile(uri);
       this.activeIndex = activeIndex;
+      getOutputChannel().appendLine(
+        `load: streaming ${path.basename(uri.fsPath)} (${bytes.length} bytes) to webview`,
+      );
       this.streamInbound(
         {
           kind: "load",

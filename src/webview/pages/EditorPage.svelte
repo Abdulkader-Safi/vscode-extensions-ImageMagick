@@ -127,6 +127,7 @@
 
     onMount(() => {
         dispose = onHostMessage((msg) => {
+            console.log("[ImageMagick] webview received:", msg.type);
             switch (msg.type) {
                 case "bulkInfo":
                     bulkFiles = msg.data.files;
@@ -170,10 +171,16 @@
                     saving = false;
                     saveStatus = null;
                     break;
+                default:
+                    console.warn(
+                        "[ImageMagick] unhandled message type (host/webview version mismatch?):",
+                        (msg as { type?: string }).type,
+                    );
             }
         });
         // Warm the engine and learn which formats it can actually encode.
         void initFormats();
+        console.log("[ImageMagick] webview mounted, sending ready");
         send({ type: "ready" });
     });
 
@@ -201,6 +208,12 @@
         meta: InboundMeta,
         bytes: Uint8Array,
     ): Promise<void> {
+        console.log(
+            "[ImageMagick] inbound complete:",
+            meta.kind,
+            bytes.length,
+            "bytes",
+        );
         if (meta.kind === "load") {
             await loadSource(bytes, meta.path, meta.name, meta.activeIndex);
             return;
@@ -233,6 +246,12 @@
     ): Promise<void> {
         try {
             const info = await service.loadFromBytes(bytes, path, name);
+            console.log(
+                "[ImageMagick] source loaded:",
+                info.name,
+                `${info.width}x${info.height}`,
+                info.format,
+            );
             source = info;
             activeIndex = index;
             previewMeta = {

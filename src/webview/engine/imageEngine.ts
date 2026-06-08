@@ -67,6 +67,7 @@ function ensureInitialized(): Promise<void> {
           "ImageMagick wasm location was not provided to the webview (window.__MAGICK__ missing).",
         );
       }
+      console.log("[ImageMagick] fetching wasm:", uris.wasm);
       const response = await fetch(uris.wasm);
       if (!response.ok) {
         throw new Error(
@@ -74,7 +75,9 @@ function ensureInitialized(): Promise<void> {
         );
       }
       const wasmBytes = new Uint8Array(await response.arrayBuffer());
+      console.log("[ImageMagick] wasm fetched, bytes:", wasmBytes.length);
       await initializeImageMagick(wasmBytes);
+      console.log("[ImageMagick] engine initialized");
     })();
   }
   return initPromise;
