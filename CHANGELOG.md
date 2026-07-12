@@ -4,6 +4,14 @@ All notable changes to the "vs-code-extension-svelte-starter" extension will be 
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.3.0]
+
+- Fixed drag-and-drop from the VS Code Explorer. Dragging an image from the
+  Explorer onto the preview did nothing, because those drops carry only a file
+  URI, not a file the webview could read. The dropped file is now loaded off
+  disk through the extension host, the same path the context menu uses. Drags
+  from Finder / File Explorer keep working as before.
+
 ## [0.2.0]
 
 - Fixed a hard crash on Windows (and any platform without a matching native
