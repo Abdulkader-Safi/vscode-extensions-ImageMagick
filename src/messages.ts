@@ -100,6 +100,12 @@ export type HostToWebviewMessage =
 /** Messages sent webview → host. */
 export type WebviewToHostMessage =
   | { type: "ready" }
+  /**
+   * Open a file dropped onto the preview from the VS Code Explorer (or another
+   * editor). Such drops carry a `file:` URI but no `File` object, so the host
+   * reads the bytes off disk and streams them back as a `load`.
+   */
+  | { type: "openUri"; data: { uri: string } }
   /** Ask the host to load a different file from the bulk list; it streams it back. */
   | { type: "selectBulkFile"; data: { index: number } }
   /** Begin a bulk save: the host shows a folder dialog, then streams each source in. */

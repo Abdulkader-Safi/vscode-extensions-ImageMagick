@@ -151,6 +151,9 @@ export class ImageEditorPanel {
         }
         this.pendingUris = [];
         return;
+      case "openUri":
+        await this.handleOpenUri(msg.data.uri);
+        return;
       case "selectBulkFile":
         await this.handleSelectBulkFile(msg.data.index);
         return;
@@ -204,6 +207,24 @@ export class ImageEditorPanel {
       this.logException(err, `readFile ${uri.fsPath}`);
       this.postError(this.errorMessage(err, `Could not open ${uri.fsPath}`));
     }
+  }
+
+  /**
+   * Loads a file dropped from the Explorer. A drop replaces the session with
+   * this single image, so any prior bulk list is cleared first.
+   */
+  private async handleOpenUri(uriString: string): Promise<void> {
+    let uri: vscode.Uri;
+    try {
+      uri = vscode.Uri.parse(uriString, true);
+    } catch (err) {
+      this.logException(err, `openUri parse ${uriString}`);
+      this.postError(this.errorMessage(err, "Could not open the dropped item"));
+      return;
+    }
+    this.bulkUris = [];
+    this.post({ type: "bulkInfo", data: { files: [], activeIndex: 0 } });
+    await this.sendSource(uri, 0);
   }
 
   private async handleSelectBulkFile(index: number): Promise<void> {

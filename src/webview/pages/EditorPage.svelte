@@ -384,6 +384,12 @@
                 errorMessage = describeError(err, `Could not open ${file.name}`);
             });
     }
+
+    function handleDropUri(uri: string) {
+        // Dropped from the VS Code Explorer: no File object, just a file: URI.
+        // The host reads it off disk and streams it back as a `load`.
+        send({ type: "openUri", data: { uri } });
+    }
 </script>
 
 <div class="flex flex-col h-full text-vscode-fg bg-vscode-bg">
@@ -452,6 +458,7 @@
                 bind:crop
                 busy={busyPreview}
                 onDrop={handleDropFile}
+                onDropUri={handleDropUri}
             />
         </main>
     </div>

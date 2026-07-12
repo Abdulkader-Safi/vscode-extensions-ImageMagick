@@ -7,6 +7,7 @@
         crop: CropRect | null;
         busy: boolean;
         onDrop: (file: File) => void;
+        onDropUri: (uri: string) => void;
     }
 
     let {
@@ -15,6 +16,7 @@
         crop = $bindable(),
         busy,
         onDrop,
+        onDropUri,
     }: Props = $props();
 
     type Corner = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
@@ -401,10 +403,59 @@
     function handleDropEvent(event: DragEvent) {
         event.preventDefault();
         dragOver = false;
-        const file = event.dataTransfer?.files?.[0];
+        const dt = event.dataTransfer;
+        // OS drags (Finder / Windows Explorer) carry a File object.
+        const file = dt?.files?.[0];
         if (file) {
             onDrop(file);
+            return;
         }
+        // VS Code Explorer drags carry no File, only a file: URI. Let the host
+        // read it off disk.
+        const uri = firstFileUri(dt);
+        if (uri) {
+            onDropUri(uri);
+            return;
+        }
+        console.warn(
+            "[ImageMagick] drop had no file or file URI; types:",
+            dt ? Array.from(dt.types) : "none",
+        );
+    }
+
+    /** Extracts the first file: URI from a VS Code Explorer drop, if any. */
+    function firstFileUri(dt: DataTransfer | null | undefined): string | null {
+        if (!dt) {
+            return null;
+        }
+        const list = dt.getData("text/uri-list");
+        if (list) {
+            for (const line of list.split(/\r?\n/)) {
+                const t = line.trim();
+                if (t && !t.startsWith("#") && t.startsWith("file:")) {
+                    return t;
+                }
+            }
+        }
+        // VS Code also exposes dragged resources as a JSON array of URI strings.
+        const resourceUrls = dt.getData("resourceurls");
+        if (resourceUrls) {
+            try {
+                const arr = JSON.parse(resourceUrls) as unknown;
+                if (Array.isArray(arr)) {
+                    const first = arr.find(
+                        (u): u is string =>
+                            typeof u === "string" && u.startsWith("file:"),
+                    );
+                    if (first) {
+                        return decodeURIComponent(first);
+                    }
+                }
+            } catch {
+                // Not JSON we understand; fall through.
+            }
+        }
+        return null;
     }
 
     const dragRectStyle = $derived.by((): string | null => {
