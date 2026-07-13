@@ -357,6 +357,20 @@
         errorMessage = null;
     }
 
+    function handleSavePreset() {
+        const state = $state.snapshot(editorState) as EditorState;
+        const maxLongEdge = state.resize
+            ? Math.max(
+                  Math.round(state.resize.width),
+                  Math.round(state.resize.height),
+              )
+            : null;
+        send({
+            type: "savePreset",
+            data: { format: state.format, quality: state.quality, maxLongEdge },
+        });
+    }
+
     function handleSelectBulkFile(index: number) {
         if (saving) {
             return;
@@ -480,5 +494,6 @@
         onSave={handleSave}
         onBulkSave={handleBulkSave}
         onReset={handleReset}
+        onSavePreset={handleSavePreset}
     />
 </div>

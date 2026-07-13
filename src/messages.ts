@@ -106,6 +106,15 @@ export type WebviewToHostMessage =
    * reads the bytes off disk and streams them back as a `load`.
    */
   | { type: "openUri"; data: { uri: string } }
+  /** Save the panel's current format/quality/resize as a new named preset. */
+  | {
+      type: "savePreset";
+      data: {
+        format: ImageFormat;
+        quality: number;
+        maxLongEdge: number | null;
+      };
+    }
   /** Ask the host to load a different file from the bulk list; it streams it back. */
   | { type: "selectBulkFile"; data: { index: number } }
   /** Begin a bulk save: the host shows a folder dialog, then streams each source in. */

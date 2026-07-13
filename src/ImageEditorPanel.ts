@@ -154,6 +154,9 @@ export class ImageEditorPanel {
       case "openUri":
         await this.handleOpenUri(msg.data.uri);
         return;
+      case "savePreset":
+        await this.handleSavePreset(msg.data);
+        return;
       case "selectBulkFile":
         await this.handleSelectBulkFile(msg.data.index);
         return;
@@ -225,6 +228,37 @@ export class ImageEditorPanel {
     this.bulkUris = [];
     this.post({ type: "bulkInfo", data: { files: [], activeIndex: 0 } });
     await this.sendSource(uri, 0);
+  }
+
+  private async handleSavePreset(data: {
+    format: ImageFormat;
+    quality: number;
+    maxLongEdge: number | null;
+  }): Promise<void> {
+    const name = await vscode.window.showInputBox({
+      prompt: "Name this preset",
+      value: `${data.format.toUpperCase()} q${data.quality}`,
+      validateInput: (v) => (v.trim() === "" ? "Enter a name" : undefined),
+    });
+    if (!name) {
+      return;
+    }
+    const config = vscode.workspace.getConfiguration("imagemagick");
+    const existing = config.get<unknown[]>("presets") ?? [];
+    const next = [
+      ...existing,
+      {
+        name: name.trim(),
+        format: data.format,
+        quality: data.quality,
+        maxLongEdge: data.maxLongEdge,
+        stripMetadata: false,
+        output: "suffix",
+        suffix: ".optimized",
+      },
+    ];
+    await config.update("presets", next, vscode.ConfigurationTarget.Global);
+    vscode.window.showInformationMessage(`Saved preset "${name.trim()}".`);
   }
 
   private async handleSelectBulkFile(index: number): Promise<void> {

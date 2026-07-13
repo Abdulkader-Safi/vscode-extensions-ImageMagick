@@ -8,6 +8,7 @@
         onSave: () => void;
         onBulkSave: () => void;
         onReset: () => void;
+        onSavePreset: () => void;
     }
 
     let {
@@ -19,6 +20,7 @@
         onSave,
         onBulkSave,
         onReset,
+        onSavePreset,
     }: Props = $props();
 </script>
 
@@ -51,6 +53,14 @@
         </span>
     </div>
 
+    <button
+        type="button"
+        onclick={onSavePreset}
+        disabled={!canSave}
+        class="px-3 py-1 text-sm rounded-sm bg-vscode-button-secondary-bg text-vscode-button-secondary-fg hover:bg-vscode-button-secondary-hover disabled:opacity-50"
+    >
+        Save as preset
+    </button>
     <button
         type="button"
         onclick={onReset}
