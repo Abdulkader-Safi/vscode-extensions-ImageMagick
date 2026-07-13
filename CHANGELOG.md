@@ -14,6 +14,9 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
   `imagemagick.presets` setting or with the new "Save as preset" button in the
   editor panel. The one-click path encodes in the extension host with the same
   WebAssembly engine, so nothing is uploaded and no editor tab opens.
+- Delete presets you no longer want: run "ImageMagick: Delete Preset" from the
+  command palette, tick the ones to remove, and confirm. Removing all of them
+  brings the built-in presets back.
 
 ## [0.3.0]
 

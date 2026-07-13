@@ -1,7 +1,11 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { ImageEditorPanel } from "./ImageEditorPanel";
-import { loadPresets, type OptimizePreset } from "./presets";
+import {
+  loadPresets,
+  loadSavedPresets,
+  type OptimizePreset,
+} from "./presets";
 import { encodePreset, presetOutputPath } from "./hostEncoder";
 
 let outputChannel: vscode.OutputChannel | undefined;
@@ -164,6 +168,52 @@ export function activate(context: vscode.ExtensionContext): void {
         );
       },
     ),
+    vscode.commands.registerCommand("imagemagick.deletePreset", async () => {
+      const saved = loadSavedPresets();
+      if (saved.length === 0) {
+        vscode.window.showInformationMessage(
+          "ImageMagick: you have no saved presets. The three built-in presets cannot be deleted; they are only offered while your preset list is empty.",
+        );
+        return;
+      }
+
+      const picks = await vscode.window.showQuickPick(
+        saved.map((p, index) => ({
+          label: p.name,
+          description: describePreset(p),
+          index,
+        })),
+        {
+          canPickMany: true,
+          placeHolder: "Select the presets to delete",
+        },
+      );
+      if (!picks || picks.length === 0) {
+        return;
+      }
+
+      const names = picks.map((p) => p.label).join(", ");
+      const confirm = await vscode.window.showWarningMessage(
+        `Delete ${picks.length} preset${picks.length === 1 ? "" : "s"}: ${names}?`,
+        { modal: true },
+        "Delete",
+      );
+      if (confirm !== "Delete") {
+        return;
+      }
+
+      const dropped = new Set(picks.map((p) => p.index));
+      const next = saved.filter((_, i) => !dropped.has(i));
+      await vscode.workspace
+        .getConfiguration("imagemagick")
+        .update("presets", next, vscode.ConfigurationTarget.Global);
+
+      vscode.window.showInformationMessage(
+        next.length === 0
+          ? `Deleted ${picks.length} preset${picks.length === 1 ? "" : "s"}. The built-in presets are back.`
+          : `Deleted ${picks.length} preset${picks.length === 1 ? "" : "s"}.`,
+      );
+    }),
   );
 }
 

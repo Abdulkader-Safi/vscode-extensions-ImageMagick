@@ -2,7 +2,7 @@ import * as assert from "assert";
 import * as path from "path";
 import { fileURLToPath } from "url";
 import * as vscode from "vscode";
-import { resolvePresets, DEFAULT_PRESETS } from "../presets.js";
+import { resolvePresets, parsePresets, DEFAULT_PRESETS } from "../presets.js";
 import type { OptimizePreset } from "../presets.js";
 import { encodePreset, presetOutputPath } from "../hostEncoder.js";
 
@@ -30,6 +30,18 @@ suite("presets", () => {
     assert.strictEqual(out.length, 1);
     assert.strictEqual(out[0].name, "Good");
     assert.strictEqual(out[0].format, "webp");
+  });
+
+  test("parsePresets never falls back to defaults", () => {
+    // The delete command edits the saved list, so it must see an empty list as
+    // empty. Falling back to the defaults here would offer to delete presets
+    // that are not actually in settings.
+    assert.deepStrictEqual(parsePresets([]), []);
+    assert.deepStrictEqual(parsePresets(undefined), []);
+    assert.strictEqual(
+      parsePresets([{ name: "Mine", format: "webp" }]).length,
+      1,
+    );
   });
 
   test("clamps quality and normalizes missing optional fields", () => {

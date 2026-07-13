@@ -99,19 +99,33 @@ function toPreset(raw: unknown): OptimizePreset | null {
   };
 }
 
+/**
+ * Pure: validate a raw array into presets. Returns exactly what is saved, with
+ * no fallback, so callers that edit the list (delete) see only real entries.
+ */
+export function parsePresets(raw: unknown): OptimizePreset[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.map(toPreset).filter((p): p is OptimizePreset => p !== null);
+}
+
 /** Pure: validate a raw array into presets, falling back to defaults when empty. */
 export function resolvePresets(raw: unknown): OptimizePreset[] {
-  if (!Array.isArray(raw)) {
-    return DEFAULT_PRESETS;
-  }
-  const out = raw
-    .map(toPreset)
-    .filter((p): p is OptimizePreset => p !== null);
+  const out = parsePresets(raw);
   return out.length > 0 ? out : DEFAULT_PRESETS;
 }
 
-/** Reads the `imagemagick.presets` setting and resolves it. */
+/** The presets to offer the user: their saved ones, or the built-in defaults. */
 export function loadPresets(): OptimizePreset[] {
-  const raw = vscode.workspace.getConfiguration("imagemagick").get("presets");
-  return resolvePresets(raw);
+  return resolvePresets(readPresetSetting());
+}
+
+/** Only the presets actually saved in settings. Empty means the defaults are in play. */
+export function loadSavedPresets(): OptimizePreset[] {
+  return parsePresets(readPresetSetting());
+}
+
+function readPresetSetting(): unknown {
+  return vscode.workspace.getConfiguration("imagemagick").get("presets");
 }

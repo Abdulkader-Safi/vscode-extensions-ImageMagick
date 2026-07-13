@@ -55,6 +55,11 @@
         "command": "imagemagick.optimizeWithPreset",
         "title": "Optimize with Preset (ImageMagick)",
         "category": "ImageMagick"
+      },
+      {
+        "command": "imagemagick.deletePreset",
+        "title": "Delete Preset",
+        "category": "ImageMagick"
       }
     ],
     "menus": {
