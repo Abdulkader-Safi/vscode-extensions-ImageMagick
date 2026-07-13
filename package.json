@@ -2,7 +2,7 @@
   "name": "imagemagick",
   "displayName": "ImageMagick",
   "description": "Resize, crop, rotate, compress and convert images directly inside VS Code, powered by ImageMagick.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "abdulkadersafi",
   "license": "MIT",
   "engines": {

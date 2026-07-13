@@ -2,39 +2,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   initializeImageMagick,
-  MagickFormat,
   MagickGeometry,
   MagickImage,
   type IMagickImage,
 } from "@imagemagick/magick-wasm";
-import type { ImageFormat, OptimizePreset } from "./presets";
-
-const FORMAT_TO_MAGICK: Record<ImageFormat, MagickFormat> = {
-  jpg: MagickFormat.Jpeg,
-  png: MagickFormat.Png,
-  webp: MagickFormat.WebP,
-  avif: MagickFormat.Avif,
-  gif: MagickFormat.Gif,
-  tiff: MagickFormat.Tiff,
-  bmp: MagickFormat.Bmp,
-};
-
-const FORMAT_EXTENSIONS: Record<ImageFormat, string> = {
-  jpg: "jpg",
-  png: "png",
-  webp: "webp",
-  avif: "avif",
-  gif: "gif",
-  tiff: "tiff",
-  bmp: "bmp",
-};
-
-const LOSSLESS: ReadonlySet<ImageFormat> = new Set<ImageFormat>([
-  "png",
-  "gif",
-  "bmp",
-  "tiff",
-]);
+import { FORMAT_TO_MAGICK, LOSSLESS_FORMATS } from "./formats.js";
+import type { OptimizePreset } from "./presets";
 
 let initPromise: Promise<void> | null = null;
 
@@ -70,7 +43,7 @@ export async function encodePreset(
     if (preset.stripMetadata) {
       image.strip();
     }
-    if (!LOSSLESS.has(preset.format)) {
+    if (!LOSSLESS_FORMATS.has(preset.format)) {
       image.quality = preset.quality;
     }
     return image.write(FORMAT_TO_MAGICK[preset.format], (d) =>
@@ -86,11 +59,10 @@ export function presetOutputPath(
   sourcePath: string,
   preset: OptimizePreset,
 ): string {
-  const dir = path.dirname(sourcePath);
-  const ext = FORMAT_EXTENSIONS[preset.format];
-  const base = path.basename(sourcePath);
-  const dot = base.lastIndexOf(".");
-  const stem = dot > 0 ? base.slice(0, dot) : base;
   const suffix = preset.output === "suffix" ? preset.suffix : "";
-  return path.join(dir, `${stem}${suffix}.${ext}`);
+  const stem = path.parse(sourcePath).name;
+  return path.join(
+    path.dirname(sourcePath),
+    `${stem}${suffix}.${preset.format}`,
+  );
 }

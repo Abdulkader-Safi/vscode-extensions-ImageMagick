@@ -219,12 +219,19 @@
             return;
         }
         // meta.kind === "bulk": encode this source and stream the result back.
+        // The format travels with it so the host can name the output file
+        // without having to decode the bytes it gets back.
+        const state = $state.snapshot(editorState) as EditorState;
         try {
-            const state = $state.snapshot(editorState) as EditorState;
             const { bytes: outBytes } = await encodeBytes(bytes, state);
             streamOutbound(
                 send,
-                { kind: "bulk", index: meta.index, name: meta.name },
+                {
+                    kind: "bulk",
+                    index: meta.index,
+                    name: meta.name,
+                    format: state.format,
+                },
                 outBytes,
             );
         } catch (err) {
@@ -232,7 +239,12 @@
             // Empty output so the host counts a failure and keeps going.
             streamOutbound(
                 send,
-                { kind: "bulk", index: meta.index, name: meta.name },
+                {
+                    kind: "bulk",
+                    index: meta.index,
+                    name: meta.name,
+                    format: state.format,
+                },
                 new Uint8Array(0),
             );
         }

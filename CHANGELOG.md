@@ -4,6 +4,22 @@ All notable changes to the "vs-code-extension-svelte-starter" extension will be 
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.5.0]
+
+No new features. This release cuts about 170 lines of internal code with no
+change in behavior, so the parts that were duplicated in three places have one
+home and can no longer drift apart.
+
+- Bulk save no longer guesses the output format by reading magic numbers out of
+  the encoded bytes. The webview knows the format it just encoded, so it now
+  sends it along. A converted image whose bytes started with an unrecognised
+  signature could previously be saved as `.img`; that is gone.
+- The format tables, the lossless-format list, and the quality clamp lived in
+  two or three copies each. They now live in one module shared by the host and
+  the webview.
+- The content-security nonce is generated with Node's crypto module rather than
+  a hand-rolled loop over `Math.random`.
+
 ## [0.4.0]
 
 - Optimization presets: right-click an image or a multi-selection and pick a

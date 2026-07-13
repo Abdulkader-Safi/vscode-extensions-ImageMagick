@@ -1,13 +1,10 @@
+import { CHUNK_BYTES } from "../messages";
 import type {
   InboundMeta,
   OutboundMeta,
   WebviewToHostMessage,
 } from "../messages";
 import { bytesToBase64, base64ToBytes } from "./engine/imageEngine";
-
-// 48 KB raw → ~64 KB base64 per message. Well under any webview transport size
-// limit, so chunks never get dropped or truncated in transit.
-const CHUNK = 48 * 1024;
 
 let outSeq = 0;
 
@@ -18,10 +15,10 @@ export function streamOutbound(
   bytes: Uint8Array,
 ): void {
   const id = ++outSeq;
-  const total = Math.max(1, Math.ceil(bytes.length / CHUNK));
+  const total = Math.max(1, Math.ceil(bytes.length / CHUNK_BYTES));
   send({ type: "outBegin", data: { id, total, meta } });
   for (let i = 0; i < total; i++) {
-    const slice = bytes.subarray(i * CHUNK, (i + 1) * CHUNK);
+    const slice = bytes.subarray(i * CHUNK_BYTES, (i + 1) * CHUNK_BYTES);
     send({ type: "outChunk", data: { id, b64: bytesToBase64(slice) } });
   }
 }
@@ -59,11 +56,7 @@ export class InboundAssembler {
 }
 
 function concat(parts: Uint8Array[]): Uint8Array {
-  let length = 0;
-  for (const part of parts) {
-    length += part.length;
-  }
-  const out = new Uint8Array(length);
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let offset = 0;
   for (const part of parts) {
     out.set(part, offset);
