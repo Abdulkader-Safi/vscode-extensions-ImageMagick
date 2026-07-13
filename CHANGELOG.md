@@ -4,6 +4,20 @@ All notable changes to the "vs-code-extension-svelte-starter" extension will be 
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.4.0]
+
+- Optimization presets: right-click an image or a multi-selection and pick a
+  preset to write optimized output straight to disk, with no panel and no
+  dialogs. Presets cover format, quality, max long edge, metadata stripping, and
+  whether to write alongside with a suffix or overwrite in place. Three presets
+  ship by default (Web WebP, Compress JPEG, PNG to WebP); add your own in the
+  `imagemagick.presets` setting or with the new "Save as preset" button in the
+  editor panel. The one-click path encodes in the extension host with the same
+  WebAssembly engine, so nothing is uploaded and no editor tab opens.
+- Delete presets you no longer want: run "ImageMagick: Delete Preset" from the
+  command palette, tick the ones to remove, and confirm. Removing all of them
+  brings the built-in presets back.
+
 ## [0.3.0]
 
 - Fixed drag-and-drop from the VS Code Explorer. Dragging an image from the

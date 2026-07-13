@@ -17,6 +17,11 @@ Powered by [magickwand.js](https://github.com/mmomtchev/magickwand.js) (full Ima
 - **Change format** — JPEG, PNG, WebP, GIF, TIFF, BMP (and AVIF where the bundled binary supports it)
 - **Live preview** with output size estimate
 - **Save As** dialog with a smart default filename (`photo.optimized.webp`) — never overwrites your source
+- **Presets & one-click optimize** — right-click an image (or a selection) →
+  **Optimize with Preset** to write optimized output straight to disk, no panel.
+  Presets hold a format, quality, max size, and metadata-strip choice; edit them
+  in the `imagemagick.presets` setting, or use **Save as preset** in the panel.
+  Remove one with **ImageMagick: Delete Preset** from the command palette.
 
 ## Usage
 

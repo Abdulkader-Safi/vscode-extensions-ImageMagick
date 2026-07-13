@@ -2,7 +2,7 @@
   "name": "imagemagick",
   "displayName": "ImageMagick",
   "description": "Resize, crop, rotate, compress and convert images directly inside VS Code, powered by ImageMagick.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "abdulkadersafi",
   "license": "MIT",
   "engines": {
@@ -50,12 +50,26 @@
         "command": "imagemagick.openImageFromExplorer",
         "title": "Optimize Image with ImageMagick",
         "category": "ImageMagick"
+      },
+      {
+        "command": "imagemagick.optimizeWithPreset",
+        "title": "Optimize with Preset (ImageMagick)",
+        "category": "ImageMagick"
+      },
+      {
+        "command": "imagemagick.deletePreset",
+        "title": "Delete Preset",
+        "category": "ImageMagick"
       }
     ],
     "menus": {
       "commandPalette": [
         {
           "command": "imagemagick.openImageFromExplorer",
+          "when": "false"
+        },
+        {
+          "command": "imagemagick.optimizeWithPreset",
           "when": "false"
         }
       ],
@@ -64,8 +78,61 @@
           "command": "imagemagick.openImageFromExplorer",
           "when": "resourceExtname =~ /\\.(png|jpg|jpeg|webp|gif|bmp|tiff|tif|avif|heic|heif)$/i",
           "group": "navigation@50"
+        },
+        {
+          "command": "imagemagick.optimizeWithPreset",
+          "when": "resourceExtname =~ /\\.(png|jpg|jpeg|webp|gif|bmp|tiff|tif|avif|heic|heif)$/i",
+          "group": "navigation@51"
         }
       ]
+    },
+    "configuration": {
+      "title": "ImageMagick",
+      "properties": {
+        "imagemagick.presets": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Optimization presets shown in the \"Optimize with Preset\" right-click menu. When empty, three built-in presets are used (Web WebP, Compress JPEG, PNG to WebP).",
+          "items": {
+            "type": "object",
+            "required": ["name", "format"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Shown in the quick-pick."
+              },
+              "format": {
+                "type": "string",
+                "enum": ["jpg", "png", "webp", "avif", "gif", "tiff", "bmp"]
+              },
+              "quality": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 80
+              },
+              "maxLongEdge": {
+                "type": ["number", "null"],
+                "default": null,
+                "description": "Downscale the longest edge to this many pixels. null keeps the source size."
+              },
+              "stripMetadata": {
+                "type": "boolean",
+                "default": false
+              },
+              "output": {
+                "type": "string",
+                "enum": ["suffix", "overwrite"],
+                "default": "suffix"
+              },
+              "suffix": {
+                "type": "string",
+                "default": ".optimized"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "scripts": {
