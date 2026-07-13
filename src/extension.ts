@@ -33,6 +33,24 @@ function filterImageUris(uris: vscode.Uri[]): vscode.Uri[] {
   return uris.filter((u) => IMAGE_EXT_RE.test(u.fsPath));
 }
 
+const LOSSLESS_FORMATS = new Set(["png", "gif", "bmp", "tiff"]);
+
+/** One-line summary of what a preset will do, shown next to its name in the quick-pick. */
+function describePreset(p: OptimizePreset): string {
+  const parts: string[] = [p.format];
+  if (p.maxLongEdge) {
+    parts.push(`max ${p.maxLongEdge}px`);
+  }
+  if (!LOSSLESS_FORMATS.has(p.format)) {
+    parts.push(`quality ${p.quality}`);
+  }
+  if (p.stripMetadata) {
+    parts.push("strip metadata");
+  }
+  parts.push(p.output === "overwrite" ? "OVERWRITES SOURCE" : "saves a copy");
+  return parts.join(" · ");
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   const channel = getOutputChannel();
   context.subscriptions.push(channel);
@@ -74,23 +92,28 @@ export function activate(context: vscode.ExtensionContext): void {
           return;
         }
 
-        const presets = loadPresets();
-        let preset: OptimizePreset | undefined = presets[0];
-        if (presets.length > 1) {
-          const pick = await vscode.window.showQuickPick(
-            presets.map((p) => ({
-              label: p.name,
-              description: `${p.format}${p.maxLongEdge ? ` · ${p.maxLongEdge}px` : ""} · q${p.quality}${p.stripMetadata ? " · strip" : ""}`,
-              preset: p,
-            })),
-            { placeHolder: "Choose an optimization preset" },
-          );
-          preset = pick?.preset;
-        }
-        if (!preset) {
+        // Always show the picker, even for a single preset. Optimizing writes
+        // to disk (and can overwrite the source), so the user must see which
+        // preset is about to run.
+        const pick = await vscode.window.showQuickPick(
+          loadPresets().map((p) => ({
+            label: p.name,
+            description: describePreset(p),
+            detail:
+              p.output === "overwrite"
+                ? "Overwrites the source file in place."
+                : `Writes alongside as <name>${p.suffix}.${p.format}`,
+            preset: p,
+          })),
+          {
+            placeHolder: `Optimize ${images.length} image${images.length === 1 ? "" : "s"} with which preset?`,
+            matchOnDescription: true,
+          },
+        );
+        if (!pick) {
           return;
         }
-        const chosen = preset;
+        const chosen = pick.preset;
 
         const wasmPath = vscode.Uri.joinPath(
           context.extensionUri,
