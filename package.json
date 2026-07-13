@@ -50,12 +50,21 @@
         "command": "imagemagick.openImageFromExplorer",
         "title": "Optimize Image with ImageMagick",
         "category": "ImageMagick"
+      },
+      {
+        "command": "imagemagick.optimizeWithPreset",
+        "title": "Optimize with Preset (ImageMagick)",
+        "category": "ImageMagick"
       }
     ],
     "menus": {
       "commandPalette": [
         {
           "command": "imagemagick.openImageFromExplorer",
+          "when": "false"
+        },
+        {
+          "command": "imagemagick.optimizeWithPreset",
           "when": "false"
         }
       ],
@@ -64,6 +73,11 @@
           "command": "imagemagick.openImageFromExplorer",
           "when": "resourceExtname =~ /\\.(png|jpg|jpeg|webp|gif|bmp|tiff|tif|avif|heic|heif)$/i",
           "group": "navigation@50"
+        },
+        {
+          "command": "imagemagick.optimizeWithPreset",
+          "when": "resourceExtname =~ /\\.(png|jpg|jpeg|webp|gif|bmp|tiff|tif|avif|heic|heif)$/i",
+          "group": "navigation@51"
         }
       ]
     },
