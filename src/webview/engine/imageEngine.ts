@@ -7,21 +7,14 @@ import {
   MagickImageInfo,
   type IMagickImage,
 } from "@imagemagick/magick-wasm";
+import {
+  FORMAT_TO_MAGICK,
+  LOSSLESS_FORMATS,
+  clampQuality,
+} from "../../formats";
 import type { EditorState, ImageFormat, SourceInfo } from "../../messages";
 
 const PREVIEW_LONG_EDGE = 1600;
-
-const FORMAT_TO_MAGICK: Record<ImageFormat, MagickFormat> = {
-  jpg: MagickFormat.Jpeg,
-  png: MagickFormat.Png,
-  webp: MagickFormat.WebP,
-  avif: MagickFormat.Avif,
-  gif: MagickFormat.Gif,
-  tiff: MagickFormat.Tiff,
-  bmp: MagickFormat.Bmp,
-};
-
-const LOSSLESS_FORMATS = new Set<ImageFormat>(["png", "gif", "bmp", "tiff"]);
 
 const MAGICK_TO_FORMAT: Record<string, ImageFormat> = {
   jpeg: "jpg",
@@ -40,13 +33,9 @@ const MAGICK_TO_FORMAT: Record<string, ImageFormat> = {
  * `@imagemagick/magick-wasm` build needs no Workers and no SharedArrayBuffer,
  * so it runs in a plain (non-cross-origin-isolated) VS Code webview.
  */
-interface MagickUris {
-  wasm: string;
-}
-
 declare global {
   interface Window {
-    __MAGICK__?: MagickUris;
+    __MAGICK_WASM__?: string;
   }
 }
 
@@ -61,14 +50,14 @@ let initPromise: Promise<void> | null = null;
 function ensureInitialized(): Promise<void> {
   if (!initPromise) {
     initPromise = (async () => {
-      const uris = window.__MAGICK__;
-      if (!uris?.wasm) {
+      const wasmUri = window.__MAGICK_WASM__;
+      if (!wasmUri) {
         throw new Error(
-          "ImageMagick wasm location was not provided to the webview (window.__MAGICK__ missing).",
+          "ImageMagick wasm location was not provided to the webview (window.__MAGICK_WASM__ missing).",
         );
       }
-      console.log("[ImageMagick] fetching wasm:", uris.wasm);
-      const response = await fetch(uris.wasm);
+      console.log("[ImageMagick] fetching wasm:", wasmUri);
+      const response = await fetch(wasmUri);
       if (!response.ok) {
         throw new Error(
           `Failed to fetch magick.wasm (HTTP ${response.status}).`,
@@ -94,7 +83,7 @@ export async function getWritableFormats(): Promise<Set<ImageFormat>> {
   if (cachedWritableFormats) {
     return cachedWritableFormats;
   }
-  const set = new Set<ImageFormat>();
+  let set = new Set<ImageFormat>();
   try {
     await ensureInitialized();
     for (const info of Magick.supportedFormats) {
@@ -107,15 +96,11 @@ export async function getWritableFormats(): Promise<Set<ImageFormat>> {
       }
     }
   } catch {
-    // Fall back to the universally-supported set if probing fails.
-    (["jpg", "png", "webp", "gif", "tiff", "bmp"] as ImageFormat[]).forEach(
-      (f) => set.add(f),
-    );
+    // Probing failed; the fallback below covers it.
   }
   if (set.size === 0) {
-    (["jpg", "png", "webp", "gif", "tiff", "bmp"] as ImageFormat[]).forEach(
-      (f) => set.add(f),
-    );
+    // The universally-supported set. AVIF is the only one that can be missing.
+    set = new Set<ImageFormat>(["jpg", "png", "webp", "gif", "tiff", "bmp"]);
   }
   cachedWritableFormats = set;
   return set;
@@ -133,23 +118,19 @@ export interface EncodeResult {
   sizeKb: number;
 }
 
-/** Browser-safe base64 of a byte array (no Node `Buffer` in a webview). */
-function toBase64(bytes: Uint8Array): string {
+/**
+ * Browser-safe base64 of a byte array (no Node `Buffer` in a webview). Bytes
+ * cross the webview/host boundary as a stream of small base64 chunks (see
+ * transport.ts); each chunk is small enough that the browser's strict `atob`
+ * never trips on truncation.
+ */
+export function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
   const chunk = 0x8000;
   for (let i = 0; i < bytes.length; i += chunk) {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
   return btoa(binary);
-}
-
-/**
- * Bytes cross the webview/host boundary as a stream of small base64 chunks
- * (see transport.ts). These convert a single chunk at each edge; chunks are
- * small enough that the browser's strict `atob` never trips on truncation.
- */
-export function bytesToBase64(bytes: Uint8Array): string {
-  return toBase64(bytes);
 }
 
 export function base64ToBytes(b64: string): Uint8Array {
@@ -291,7 +272,7 @@ export class ImageService {
       image.resize(
         new MagickGeometry(`${PREVIEW_LONG_EDGE}x${PREVIEW_LONG_EDGE}>`),
       );
-      const base64 = image.write(MagickFormat.Png, (d) => toBase64(d));
+      const base64 = image.write(MagickFormat.Png, (d) => bytesToBase64(d));
       return `data:image/png;base64,${base64}`;
     });
 
@@ -319,11 +300,4 @@ export async function encodeBytes(
 ): Promise<EncodeResult> {
   await ensureInitialized();
   return encodeFrom(bytes, state);
-}
-
-function clampQuality(q: number): number {
-  if (!Number.isFinite(q)) {
-    return 85;
-  }
-  return Math.max(1, Math.min(100, Math.round(q)));
 }

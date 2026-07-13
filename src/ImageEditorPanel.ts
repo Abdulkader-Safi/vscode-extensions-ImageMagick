@@ -1,6 +1,8 @@
+import * as crypto from "node:crypto";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { getOutputChannel } from "./extension";
+import { CHUNK_BYTES } from "./messages";
 import type {
   HostToWebviewMessage,
   ImageFormat,
@@ -8,16 +10,6 @@ import type {
   OutboundMeta,
   WebviewToHostMessage,
 } from "./messages";
-
-const FORMAT_EXTENSIONS: Record<ImageFormat, string> = {
-  jpg: "jpg",
-  png: "png",
-  webp: "webp",
-  avif: "avif",
-  gif: "gif",
-  tiff: "tiff",
-  bmp: "bmp",
-};
 
 const FORMAT_FILTER_LABELS: Record<ImageFormat, string> = {
   jpg: "JPEG",
@@ -28,10 +20,6 @@ const FORMAT_FILTER_LABELS: Record<ImageFormat, string> = {
   tiff: "TIFF",
   bmp: "BMP",
 };
-
-// Raw bytes per inbound chunk. ~64 KB base64 per message — small enough that
-// VS Code's webview transport never drops or truncates it.
-const CHUNK = 48 * 1024;
 
 /**
  * Hosts the image-editor webview. The actual image work (decode, transform,
@@ -65,7 +53,7 @@ export class ImageEditorPanel {
     { meta: OutboundMeta; total: number; parts: Buffer[] }
   >();
   /** Resolvers for in-flight bulk encodes, keyed by file index. */
-  private pendingBulkEncode = new Map<number, (out: Buffer) => void>();
+  private pendingBulkEncode = new Map<number, (out: BulkEncodeResult) => void>();
 
   static createOrShow(
     extensionUri: vscode.Uri,
@@ -280,7 +268,7 @@ export class ImageEditorPanel {
     const resolve = this.pendingBulkEncode.get(meta.index);
     if (resolve) {
       this.pendingBulkEncode.delete(meta.index);
-      resolve(bytes);
+      resolve({ bytes, format: meta.format });
     }
   }
 
@@ -289,8 +277,8 @@ export class ImageEditorPanel {
     bytes: Buffer,
   ): Promise<void> {
     const log = getOutputChannel();
-    const ext = FORMAT_EXTENSIONS[meta.format];
-    const baseName = stripExtension(meta.name) + ".optimized." + ext;
+    const ext = meta.format;
+    const baseName = `${path.parse(meta.name).name}.optimized.${ext}`;
     const defaultDir = meta.path
       ? vscode.Uri.file(path.dirname(meta.path))
       : (vscode.workspace.workspaceFolders?.[0]?.uri ??
@@ -382,15 +370,17 @@ export class ImageEditorPanel {
       });
       try {
         const sourceBytes = await vscode.workspace.fs.readFile(uri);
-        const outBytes = await this.encodeViaWebview(i, name, sourceBytes);
+        const { bytes: outBytes, format } = await this.encodeViaWebview(
+          i,
+          name,
+          sourceBytes,
+        );
         if (outBytes.byteLength === 0) {
           throw new Error("webview returned no output");
         }
-        // Sniff the output's magic number for the right extension so converted
-        // images land named correctly, even though the host never decoded them.
-        const finalPath = withOptimizedSuffix(
-          path.join(folder.fsPath, name),
-          outBytes,
+        const finalPath = path.join(
+          folder.fsPath,
+          `${path.parse(name).name}.optimized.${format}`,
         );
         await vscode.workspace.fs.writeFile(
           vscode.Uri.file(finalPath),
@@ -420,15 +410,15 @@ export class ImageEditorPanel {
 
   /**
    * Streams one source image to the webview for encoding and resolves with the
-   * encoded output. Times out defensively so a dropped reply can't wedge the
-   * whole bulk loop.
+   * encoded output and the format the webview chose. Times out defensively so a
+   * dropped reply can't wedge the whole bulk loop.
    */
   private encodeViaWebview(
     index: number,
     name: string,
     bytes: Uint8Array,
-  ): Promise<Buffer> {
-    return new Promise<Buffer>((resolve, reject) => {
+  ): Promise<BulkEncodeResult> {
+    return new Promise<BulkEncodeResult>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingBulkEncode.delete(index);
         reject(new Error(`Timed out encoding ${name}`));
@@ -444,10 +434,10 @@ export class ImageEditorPanel {
   /** Sends `bytes` to the webview as an inbound base64 chunk sequence. */
   private streamInbound(meta: InboundMeta, bytes: Uint8Array): void {
     const id = ++this.streamSeq;
-    const total = Math.max(1, Math.ceil(bytes.length / CHUNK));
+    const total = Math.max(1, Math.ceil(bytes.length / CHUNK_BYTES));
     this.post({ type: "inBegin", data: { id, total, meta } });
     for (let i = 0; i < total; i++) {
-      const slice = bytes.subarray(i * CHUNK, (i + 1) * CHUNK);
+      const slice = bytes.subarray(i * CHUNK_BYTES, (i + 1) * CHUNK_BYTES);
       this.post({
         type: "inChunk",
         data: { id, b64: Buffer.from(slice).toString("base64") },
@@ -522,12 +512,12 @@ export class ImageEditorPanel {
     );
     // The ImageMagick wasm module, copied into dist/ at build time. The engine
     // JS itself is bundled into webview.js; only the wasm is fetched at runtime
-    // via this resource URI (window.__MAGICK__).
+    // via this resource URI (window.__MAGICK_WASM__).
     const magickWasmUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.extensionUri, "dist", "magick.wasm"),
     );
-    const nonce = makeNonce();
-    const magickUris = JSON.stringify({ wasm: magickWasmUri.toString() });
+    const nonce = crypto.randomBytes(16).toString("base64url");
+    const wasmUri = JSON.stringify(magickWasmUri.toString());
 
     // CSP additions vs. a plain webview:
     //  - script-src 'wasm-unsafe-eval' → allow WebAssembly.instantiate
@@ -543,80 +533,14 @@ export class ImageEditorPanel {
 </head>
 <body>
   <div id="root"></div>
-  <script nonce="${nonce}">window.__MAGICK__ = ${magickUris};</script>
+  <script nonce="${nonce}">window.__MAGICK_WASM__ = ${wasmUri};</script>
   <script nonce="${nonce}" type="module" src="${scriptUri}"></script>
 </body>
 </html>`;
   }
 }
 
-function stripExtension(name: string): string {
-  const dot = name.lastIndexOf(".");
-  return dot > 0 ? name.slice(0, dot) : name;
-}
-
-/**
- * Builds the `<stem>.optimized.<ext>` output path. The target extension is
- * sniffed from the encoded bytes' magic number, since the host never decodes
- * the image and so doesn't otherwise know the chosen format.
- */
-function withOptimizedSuffix(destPath: string, bytes: Uint8Array): string {
-  const dir = path.dirname(destPath);
-  const stem = stripExtension(path.basename(destPath));
-  const ext = sniffExtension(bytes);
-  return path.join(dir, `${stem}.optimized.${ext}`);
-}
-
-/** Minimal magic-number sniff for the formats this extension can output. */
-function sniffExtension(b: Uint8Array): string {
-  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) {
-    return "jpg";
-  }
-  if (b.length >= 4 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e) {
-    return "png";
-  }
-  if (
-    b.length >= 12 &&
-    b[0] === 0x52 &&
-    b[1] === 0x49 &&
-    b[2] === 0x46 &&
-    b[8] === 0x57 &&
-    b[9] === 0x45 &&
-    b[10] === 0x42 &&
-    b[11] === 0x50
-  ) {
-    return "webp";
-  }
-  if (b.length >= 3 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) {
-    return "gif";
-  }
-  if (b.length >= 2 && b[0] === 0x42 && b[1] === 0x4d) {
-    return "bmp";
-  }
-  if (
-    b.length >= 2 &&
-    ((b[0] === 0x49 && b[1] === 0x49) || (b[0] === 0x4d && b[1] === 0x4d))
-  ) {
-    return "tiff";
-  }
-  if (
-    b.length >= 12 &&
-    b[4] === 0x66 &&
-    b[5] === 0x74 &&
-    b[6] === 0x79 &&
-    b[7] === 0x70
-  ) {
-    return "avif";
-  }
-  return "img";
-}
-
-function makeNonce(): string {
-  const chars =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let out = "";
-  for (let i = 0; i < 32; i++) {
-    out += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return out;
+interface BulkEncodeResult {
+  bytes: Buffer;
+  format: ImageFormat;
 }

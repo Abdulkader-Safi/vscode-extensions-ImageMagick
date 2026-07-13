@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { ImageEditorPanel } from "./ImageEditorPanel";
+import { LOSSLESS_FORMATS } from "./formats";
 import {
   loadPresets,
   loadSavedPresets,
@@ -17,6 +18,8 @@ export function getOutputChannel(): vscode.OutputChannel {
   return outputChannel;
 }
 
+// Keep this list in sync with the `explorer/context` menu `when` clause in
+// package.json, which VS Code requires as a literal regex.
 const IMAGE_EXTENSIONS = [
   "png",
   "jpg",
@@ -31,13 +34,11 @@ const IMAGE_EXTENSIONS = [
   "heif",
 ];
 
-const IMAGE_EXT_RE = /\.(png|jpg|jpeg|webp|gif|bmp|tiff|tif|avif|heic|heif)$/i;
+const IMAGE_EXT_RE = new RegExp(`\\.(${IMAGE_EXTENSIONS.join("|")})$`, "i");
 
 function filterImageUris(uris: vscode.Uri[]): vscode.Uri[] {
   return uris.filter((u) => IMAGE_EXT_RE.test(u.fsPath));
 }
-
-const LOSSLESS_FORMATS = new Set(["png", "gif", "bmp", "tiff"]);
 
 /** One-line summary of what a preset will do, shown next to its name in the quick-pick. */
 function describePreset(p: OptimizePreset): string {

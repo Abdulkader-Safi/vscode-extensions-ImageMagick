@@ -1,4 +1,7 @@
 import * as vscode from "vscode";
+// Explicit .js: tests run the compiled output from out/ as ESM, where Node's
+// loader requires the extension on relative imports.
+import { clampQuality } from "./formats.js";
 import type { ImageFormat } from "./messages";
 
 export type { ImageFormat } from "./messages";
@@ -58,11 +61,6 @@ export const DEFAULT_PRESETS: OptimizePreset[] = [
     suffix: ".optimized",
   },
 ];
-
-function clampQuality(q: unknown): number {
-  const n = typeof q === "number" && Number.isFinite(q) ? q : 85;
-  return Math.max(1, Math.min(100, Math.round(n)));
-}
 
 /** Validates one raw config entry into an OptimizePreset, or null if unusable. */
 function toPreset(raw: unknown): OptimizePreset | null {

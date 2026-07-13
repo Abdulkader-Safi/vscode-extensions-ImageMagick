@@ -60,7 +60,13 @@ export type InboundMeta =
 /** What a completed outbound (webview → host) byte stream should become. */
 export type OutboundMeta =
   | { kind: "save"; name: string; path: string | null; format: ImageFormat }
-  | { kind: "bulk"; index: number; name: string };
+  | { kind: "bulk"; index: number; name: string; format: ImageFormat };
+
+/**
+ * Raw bytes per chunk. ~64 KB once base64'd, which is small enough that VS
+ * Code's webview transport never drops or truncates a message.
+ */
+export const CHUNK_BYTES = 48 * 1024;
 
 /**
  * Messages sent host → webview.
